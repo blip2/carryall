@@ -4,6 +4,8 @@ Single-file HTML tools that carry their own data. Each tool is one `.html` file 
 the structured data, the viewer and the editor. There's no server or database, and it keeps
 working for as long as browsers open HTML.
 
+**Try it:** [blip2.github.io/carryall](https://blip2.github.io/carryall/) has the example tools, sample projects and the blank template.
+
 - **Hosted home copy**: the latest version of each tool lives at a URL (e.g. an Azure Static Web App).
   People open it, load a saved file, edit it and **download** an updated copy.
 - **Saved copies**: stored anywhere (SharePoint, file shares). A copy opened on its own still works fully,
@@ -21,6 +23,7 @@ working for as long as browsers open HTML.
 | `carryall.html` | Blank template with a tiny starter app. Copy this to make a new tool. |
 | `src/core.js`, `src/core.css`, `src/readme.txt` | The framework. Edit here only. |
 | `tools/sync-core.mjs` | Stamps the core + README into the template and every app file. |
+| `tools/build-site.mjs`, `site/`, `.github/workflows/pages.yml` | Publishes the examples to GitHub Pages on every push to `main`, rewriting their `home` URLs to the Pages address. |
 | `tools/dev-server.mjs` | Local "home" server for testing (`http://localhost:8765/`). |
 | `examples/asset-register.html` | Example app: schema v3, two migrations, dashboard, custom view, settings. |
 | `examples/fixtures/asset-register-v1-saved.html` | An *old* saved copy (v1.0, schema 1) for testing upgrades. |

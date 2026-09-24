@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carryall examples</title>
+<meta name="description" content="Single-file HTML tools that carry their own data. Try the example tools.">
+<style>
+:root {
+  --red: #e61e28; --slate: #50697d; --grey-light: #f1ede9;
+  --bg: var(--grey-light); --surface: #ffffff; --text: #000000; --muted: var(--slate); --border: #d8d2cb;
+  --focus: var(--red);
+  color-scheme: light;
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root { --bg: #121212; --surface: #1c1c1c; --text: #ffffff; --muted: #c3cbd2; --border: #3a3a3a; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 1rem/1.5 Arial, "Helvetica Neue", Helvetica, system-ui, sans-serif; }
+a { color: var(--text); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.skip { position: absolute; left: 0.5rem; top: -4rem; background: var(--surface); padding: 0.625rem 1rem; border: 2px solid var(--focus); }
+.skip:focus { top: 0.5rem; }
+header { background: var(--surface); border-top: 4px solid var(--red); border-bottom: 1px solid var(--border); }
+.wrap { max-width: 60rem; margin: 0 auto; padding: 0 1rem; }
+header .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; padding-top: 0.75rem; padding-bottom: 0.75rem; }
+h1 { font-size: 1.375rem; margin: 0; line-height: 1.25; }
+h2 { font-size: 1.25rem; margin: 2rem 0 0.75rem; line-height: 1.25; }
+h3 { font-size: 1.125rem; margin: 0 0 0.25rem; line-height: 1.25; }
+.lead { font-size: 1.125rem; max-width: 42rem; margin: 1.5rem 0 0; }
+.muted { color: var(--muted); }
+.cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--border); border-top: 4px solid var(--red); border-radius: 0.25rem; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.card p { margin: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
+.btn { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 1rem; border-radius: 0.25rem; border: 1px solid var(--slate); background: var(--surface); color: var(--text); text-decoration: none; }
+.btn:hover { background: var(--bg); }
+.btn.primary { background: var(--red); border-color: var(--red); color: #ffffff; font-weight: 700; }
+ol { padding-left: 1.25rem; max-width: 42rem; }
+li { margin-bottom: 0.375rem; }
+code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.9375rem; }
+footer { margin-top: 3rem; background: var(--surface); border-top: 1px solid var(--border); color: var(--muted); font-size: 0.875rem; }
+footer .wrap { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+  <div class="wrap">
+    <h1>Carryall examples</h1>
+    <a class="btn" href="https://github.com/blip2/carryall">View the code on GitHub</a>
+  </div>
+</header>
+<main id="main" class="wrap">
+  <p class="lead">Carryall tools are single HTML files that hold structured data, a viewer and an editor.
+    Open a tool, add your data and download a copy. The copy works on its own, anywhere, with no server.</p>
+
+  <h2>Example tools</h2>
+  <div class="cards">
+    <section class="card" aria-labelledby="rt">
+      <h3 id="rt">Design review tracker</h3>
+      <p>Discipline design reviews for a building project: review packages, comments, responses,
+        a who-reviews-whom matrix and a printable comment sheet.</p>
+      <div class="actions">
+        <a class="btn primary" href="review-tracker.html">Open the tool</a>
+        <a class="btn" href="fixtures/review-tracker-sample.html">Open a sample project</a>
+        <a class="btn" href="fixtures/review-tracker-sample.html" download>Download the sample</a>
+      </div>
+    </section>
+    <section class="card" aria-labelledby="ar">
+      <h3 id="ar">Asset register</h3>
+      <p>Equipment across sites, with cost, age and book value, a replacement plan and a dashboard.</p>
+      <div class="actions">
+        <a class="btn primary" href="asset-register.html">Open the tool</a>
+        <a class="btn" href="fixtures/asset-register-v1-saved.html" download>Download an old v1 copy</a>
+      </div>
+    </section>
+    <section class="card" aria-labelledby="tp">
+      <h3 id="tp">Blank template</h3>
+      <p>The starting point for a new tool, with a small starter app and the full reference built in.
+        See the <a href="https://github.com/blip2/carryall/blob/main/docs/CREATE-A-TOOL-WITH-COPILOT.md">guide to building a tool with Copilot</a>.</p>
+      <div class="actions">
+        <a class="btn primary" href="carryall.html">Open the template</a>
+        <a class="btn" href="carryall.html" download>Download the template</a>
+      </div>
+    </section>
+  </div>
+
+  <h2>Try the saved-copy workflow</h2>
+  <ol>
+    <li>Download the old v1 copy of the asset register and open it from your computer in Edge or Chrome.
+      It works on its own and shows a banner pointing to the latest version.</li>
+    <li>Select <strong>Open data in latest tool</strong>. The hosted tool opens and loads the data,
+      upgrading it from schema 1 to schema 3.</li>
+    <li>Make a change and select <strong>Download</strong>. You get a new copy with your data and the latest tool inside it.</li>
+  </ol>
+  <p class="muted">Everything runs in your browser. Nothing you enter is uploaded; data leaves the page only as a file you download.</p>
+</main>
+<footer>
+  <div class="wrap">Carryall is open source under the MIT licence.</div>
+</footer>
+</body>
+</html>
