@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "home", "runtimeExecutable": "node", "runtimeArgs": ["tools/dev-server.mjs", "examples", "8765"], "port": 8765 }
+  ]
+}

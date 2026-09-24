@@ -1,0 +1,2408 @@
+<!DOCTYPE html>
+<html lang="en-GB" data-ca-core="0.1.0">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asset Register</title>
+<!--ca-readme
+
+ ██████  CARRYALL  ·  a single-file tool that carries its own data
+ ─────────────────────────────────────────────────────────────────
+ Core version: 0.1.0
+
+ WHAT THIS FILE IS
+ This one HTML file is a complete app: structured data + viewer + editor.
+ Open it in Edge or Chrome and it works. There is no server and no database.
+ Users edit the data and save a new copy of this file (to SharePoint, a file
+ share, anywhere). The copy contains the data AND the code that made it, so
+ it keeps working on its own for as long as browsers can open HTML.
+
+ The preferred workflow is to use the tool's hosted "home" copy (app.home,
+ e.g. an Azure Static Web App). A saved file opened locally shows a banner
+ offering to send its data to the home copy, which upgrades (migrates) the
+ data to the latest schema. Saved copies stay usable offline regardless.
+
+ WHERE THINGS ARE IN THIS FILE (all ids start with "ca-")
+   <script id="ca-data" type="application/json">   THE DATA. Plain JSON, one
+        row per line. "null" in a blank tool. Readable in any text editor.
+   <style id="ca-core-css">    framework styles       (do not edit, see below)
+   <style id="ca-app-css">     app styles             (edit freely)
+   <div id="ca-root">          UI renders here; emptied when saving
+   <noscript id="ca-snapshot"> static HTML tables of the data, rewritten on
+        every save, for readers with JavaScript disabled
+   <script id="ca-vendor-*">   optional inlined libraries (one per block)
+   <script id="ca-core">       the Carryall runtime   (do not edit, see below)
+   <script id="ca-plugin-*">   optional plugins
+   <script id="ca-app">        THE APP DEFINITION: schema, calcs, views,
+        migrations. This is the only script an app author edits.
+
+ RULE: every <script>, <style> or <noscript> you add MUST have an id starting
+ "ca-". Saving rebuilds the file from these blocks and drops anything else.
+ The core blocks and this README are replaced by tools/sync-core.mjs when the
+ core is upgraded, so never hand-edit them inside an app file.
+
+ ════════════════════════════════════════════════════════════════
+ HOW TO BUILD A NEW TOOL (instructions for people and LLMs)
+ ════════════════════════════════════════════════════════════════
+ 1. Copy the blank template (carryall.html). Name it after the tool.
+ 2. Edit ONLY <script id="ca-app"> (and optionally <style id="ca-app-css">).
+ 3. Call Carryall.app({...}) once, with:
+      id             stable kebab-case id. NEVER change it after release:
+                     files are matched to tools by this id.
+      name           display name
+      version        semver of the app code, bump on every release
+      schemaVersion  integer, starts at 1. Bump by 1 whenever the SHAPE of
+                     stored data changes, and add a migration (step 6).
+      description    one line shown on the start screen
+      home           URL of the hosted copy (optional but recommended)
+      versionUrl     URL of a JSON file {"version": "1.2.0"} used to tell
+                     saved copies an update exists (optional, needs CORS)
+      identity       "azure-swa" to record the signed-in user in savedBy
+      locale         e.g. "en-GB" (formats numbers and dates)
+      currency       e.g. "GBP"
+      fileName       default file name, without .html (the project number
+                     is prefixed when set, e.g. "PRJ-1042 asset-register.html")
+      saveInPlace    false (default): Open uses a plain file input and the
+                     Download button downloads a new
+                     copy, which works everywhere. true: Edge/Chrome write
+                     back to the opened file (asks permission) and fall
+                     back to a download if refused.
+      properties     document properties, see DOCUMENT PROPERTIES below.
+                     { required: ['projectNumber', 'projectName'],
+                       firstRevision: 'P01' }  (these are the defaults)
+                     or false to switch them off for a trivial tool.
+      tables         see step 4
+      settings       optional single record of document-wide values: same
+                     shape as a table ({ columns: {...} }). Stored in
+                     data.settings. Edited with a "settings" view.
+      views          see step 5 (defaults to one table view per table)
+      migrations     see step 6
+      fixtures       see step 7
+      onNew(doc, api)  optional: seed a brand new document
+ 4. Define tables. Each row automatically gets a stable string "id".
+      tables: {
+        assets: {
+          label: 'Assets', singular: 'asset',
+          display: 'name',        // column (or fn(row)) used when referenced
+          validate: (row, api) => ({ field: 'message' }),  // optional
+          onSave: (row, before, api) => { row.closed = ... },  // optional:
+                  // adjust a row from the form before it is stored
+                  // (before is null for a new row)
+          columns: {
+            name:   { type: 'text', required: true, unique: true },
+            notes:  { type: 'longtext' },
+            cost:   { type: 'currency', min: 0 },
+            qty:    { type: 'number', decimals: 0, default: 1 },
+            rate:   { type: 'percent' },        // stored as 15 meaning 15%
+            bought: { type: 'date', default: api => api.today },  // "YYYY-MM-DD"
+            active: { type: 'boolean', default: true },
+            status: { type: 'choice', options: ['Open', 'Closed'],
+                      colors: { Open: 'green', Closed: 'grey' } },
+            site:   { type: 'ref', table: 'sites' },   // stores the row id;
+                    // display: 'code' shows one field of the linked row in tables
+            total:  { type: 'computed', format: 'currency',
+                      fn: (row, api) => (row.cost || 0) * (row.qty || 0) },
+          } } }
+    Column types: text longtext number currency percent date boolean
+      choice ref computed.
+    Common column options: label, required, default (value or fn(api)),
+      help, hidden (never shown), hideInForm, min, max, decimals, unique,
+      mono (show in monospace: references, drawing and job numbers).
+    Pill colours: grey green amber red blue purple teal pink. Pills always
+      show their text, so colour is never the only signal. For computed
+      columns colors may be a function (value, row) => colour.
+    Computed columns are NEVER stored; they are recalculated from code.
+      Keep them pure. fn(row, api) may use api.settings, api.today,
+      api.rows(t), api.row(t, id), api.value(t, row, key), api.sum(...),
+      api.util.daysBetween(a, b), yearsBetween, addDays, addMonths, parseDate.
+    Store money as plain numbers in major units (1234.5). Store dates as
+      "YYYY-MM-DD" strings. Store nothing derivable.
+ 5. Define views (tabs). Types:
+      { type: 'table', table, title?, columns?: [keys], sort?: {key, dir},
+        totals?: [keys], filters?: [keys] (computed columns allowed),
+        where?: (row, api) => bool,
+        add?: false, readOnly?: true, preset?: {defaults for new rows} }
+      { type: 'summary', table, groupBy, bucket?: 'month'|'year' (dates),
+        metrics?: [{ label, op: 'count'|'sum'|'avg'|'min'|'max', column, format? }],
+        chart?: false | metricIndex, showTable?: false, where?, sortBy?: 'label' }
+      { type: 'kpi', items: [{ label, value: api => number, format }] }
+          format: number | integer | currency | percent | text | date
+      { type: 'dashboard', title, blocks: [ ...kpi/summary/table/custom ] }
+          kpi blocks and blocks with wide: true span the full width
+      { type: 'settings', title, fields?: [keys], intro? }
+      { type: 'custom', title, render: (el, api) => { el.append(...) } }
+    Custom views build DOM with api.h(tag, props, ...children), which is
+      XSS-safe (children become text). NEVER use innerHTML with data.
+    Useful api members in views: api.doc, api.settings, api.rows(t),
+      api.insert(t, row) / api.update(t, id, patch) / api.remove(t, id),
+      api.setSettings(patch), api.openForm(t, id?), api.format(t, row, key),
+      api.formatAs(type, value), api.ui.barChart([{label, value}], {format}),
+      api.ui.kpi(label, text), api.ui.card(title, ...nodes), api.ui.pill,
+      api.ui.dialog / alert / confirm, api.toast(msg).
+    NEVER mutate api.doc directly: use insert/update/remove/setSettings so
+      undo, recovery and the unsaved-changes marker work.
+ 6. Migrations. When stored data changes shape, bump schemaVersion from N to
+    N+1 and add migrations[N+1] = (doc, ctx) => { ...mutate doc... }.
+      doc is the whole file envelope {app, meta, settings, tables}. Mutate
+      it in place (or return a new one). ctx.uid() makes new row ids.
+    Rules: migrations are append-only. Never edit or delete a released
+      migration. Each one must work on ANY file at the previous version,
+      including empty tables and missing fields. Adding an optional column
+      does not need a migration; renaming, splitting, retyping, or moving
+      data does. Unknown fields are preserved, so removing a column from
+      the schema leaves old values in the file (harmless).
+    Files saved by a NEWER schema open read-only with a warning.
+ 7. Test. Open the file with ?selftest on the URL (or About, Run self-test).
+    It checks the definition, renders every view, migrates each fixture:
+      fixtures: [{ name: 'v1 sample', doc: {app: {id, schemaVersion: 1},
+                   tables: {...}}, expect: (doc, api) => boolean }]
+    and round-trips an export. Keep one small fixture per old schema version.
+ 8. Release: bump version, deploy the file as the home copy. The home copy
+    is simply this file with <script id="ca-data"> containing null.
+
+ STYLE (full rules in docs/STYLE-GUIDE.md of the Carryall repository)
+   The core styles already meet WCAG 2.1 AA: Arial, 16px base, rem units,
+   44px targets, visible focus, light and dark modes. When writing an app:
+   * Use the core classes (ca-card, ca-table, ca-btn, ca-kpi, ca-pill) and
+     the palette and semantic custom properties declared at the top of
+     ca-core-css. Never write raw hex colours in an app. Chart series take
+     colours in order from Carryall.ui.palette.
+   * Never convey meaning by colour alone: pair it with text.
+   * One h1 (the tool name). Card and section titles are h2.
+   * Copy: sentence case, plain UK English, buttons are verbs ("Add
+     comment", never "OK" or "Submit"), specific error messages that say
+     what to do, no em dashes, no emoji, dates as "1 September 2026".
+   * Custom controls must be real buttons, inputs and links with
+     accessible names, reachable and usable from the keyboard.
+
+ DOCUMENT PROPERTIES (built in, the same in every tool)
+   Every document carries doc.properties, edited from the line under the
+   tool name (or More, Document properties). No app code is needed.
+     projectNumber, projectName   required before the first download
+     createdBy, updatedBy         updatedBy is set on every download from
+                                  the user's name (Azure sign-in, or asked
+                                  once and remembered in the browser)
+     checkedBy, checkedAt         "Mark as checked" also stores checkedHash,
+                                  a fingerprint of tables + settings; any
+                                  later data change shows "Changed since
+                                  check" (undoing the change clears it)
+     revisions                    issued revisions, oldest first:
+                                  [{ rev, date, description, by, checkedBy }]
+                                  next code suggested: P01 to P02, A to B
+   Read them in views and calcs as api.properties, api.revision (latest
+   revision or null) and api.user. Change them with api.setProperties().
+   meta.revision is different: it simply counts downloads/saves.
+
+ DATA ENVELOPE (what <script id="ca-data"> holds)
+   { "format": "carryall/1",
+     "app":  { "id", "version", "schemaVersion" },   written on save
+     "meta": { "docId", "revision" (save count), "created", "savedAt",
+               "coreVersion", "migrations": [{from, to, at, appVersion}] },
+     "properties": { "projectNumber", "projectName", "createdBy",
+               "updatedBy", "checkedBy", "checkedAt", "checkedHash",
+               "revisions": [ ... ] },
+     "settings": { ... },
+     "tables": { "<table>": [ { "id": "…", "<column>": value, … } ] } }
+   The characters < are written as < inside the JSON (valid JSON).
+
+ PLUGINS AND LIBRARIES
+   Add a library by pasting its minified source into its own
+   <script id="ca-vendor-NAME"> with a comment giving version and licence.
+   Register extra view types from a <script id="ca-plugin-NAME">:
+     Carryall.plugin({ name, version, setup(api) {},
+       views: { myview: (el, view, api) => { ... } } });
+   Suggested: Chart.js (charts), uPlot (fast time series), Papa Parse
+   (heavy CSV), SheetJS CE (xlsx, about 1 MB), decimal.js (exact money).
+   Everything must be inlined: no CDN links, so files work offline forever.
+
+ LIMITS
+   Designed for hundreds to a few thousand rows in total (< 1 MB). A
+   warning shows above 5,000 rows or 5 MB. Beyond ~20,000 rows use a
+   database. No attachments or images in data.
+
+ DOWNLOADING AND OPENING (for users)
+   Download gives you a new copy of this file containing your data. Put it
+   back where the original lived (e.g. upload it to SharePoint, replacing
+   the old one, so version history is kept). Open or drag in a saved
+   .html, a .json export, or a .csv (rows are added to a table). Work you
+   have not downloaded is kept in this browser as a recovery copy.
+-->
+<script type="application/json" id="ca-data">null</script>
+<style id="ca-core-css">
+/* Carryall core styles, implementing docs/STYLE-GUIDE.md.
+   Apps adjust semantic tokens in #ca-app-css; never edit here, and never use raw hex in apps. */
+:root {
+  /* Palette (style guide section 2). Charts use series 1 to 10 in order. */
+  --ca-red: #e61e28;
+  --ca-black: #000000;
+  --ca-white: #ffffff;
+  --ca-purple: #7d4196;
+  --ca-blue-dark: #005aaa;
+  --ca-teal: #32a4a0;
+  --ca-pink: #c83c96;
+  --ca-green: #4ba046;
+  --ca-blue-bright: #1e9bd7;
+  --ca-sage: #91967d;
+  --ca-orange: #e66e23;
+  --ca-slate: #50697d;
+  --ca-grey-light: #f1ede9;
+
+  /* Semantic tokens: components use these, not the palette directly. */
+  --ca-bg: var(--ca-grey-light);
+  --ca-surface: var(--ca-white);
+  --ca-surface-2: #f8f6f4;
+  --ca-text: var(--ca-black);
+  --ca-muted: var(--ca-slate);             /* 5.7:1 on white, 4.9:1 on the page background */
+  --ca-border: #d8d2cb;                     /* decorative dividers only */
+  --ca-border-strong: var(--ca-slate);      /* control outlines, 3:1 or better */
+  --ca-accent: var(--ca-red);               /* primary action and focus */
+  --ca-accent-text: var(--ca-white);
+  --ca-accent-soft: color-mix(in srgb, var(--ca-red) 7%, var(--ca-white));
+  --ca-focus: var(--ca-red);
+  --ca-link: var(--ca-text);
+  --ca-danger: var(--ca-red);
+  --ca-success: var(--ca-green);
+  --ca-warning: var(--ca-orange);
+  --ca-info: var(--ca-blue-dark);
+  --ca-warn-bg: color-mix(in srgb, var(--ca-orange) 14%, var(--ca-white));
+  --ca-info-bg: color-mix(in srgb, var(--ca-blue-dark) 8%, var(--ca-white));
+  --ca-bar: var(--ca-red);
+  --ca-bar-track: var(--ca-grey-light);
+  --ca-pill-mix: 16%;
+
+  --ca-radius: 0.25rem;
+  --ca-target: 2.75rem;                     /* 44px minimum touch/click target */
+  --ca-font: Arial, "Helvetica Neue", Helvetica, system-ui, -apple-system, sans-serif;
+  --ca-mono: "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+  color-scheme: light;
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ca-bg: #121212;
+    --ca-surface: #1c1c1c;
+    --ca-surface-2: #262626;
+    --ca-text: var(--ca-white);
+    --ca-muted: #c3cbd2;
+    --ca-border: #3a3a3a;
+    --ca-border-strong: #8d99a3;
+    --ca-accent-soft: color-mix(in srgb, var(--ca-red) 16%, #1c1c1c);
+    --ca-warn-bg: color-mix(in srgb, var(--ca-orange) 20%, #1c1c1c);
+    --ca-info-bg: color-mix(in srgb, var(--ca-blue-dark) 30%, #1c1c1c);
+    --ca-bar-track: #2e2e2e;
+    --ca-pill-mix: 30%;
+    color-scheme: dark;
+  }
+}
+@media (prefers-contrast: more) {
+  :root { --ca-border: var(--ca-border-strong); --ca-muted: var(--ca-text); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+* { box-sizing: border-box; }
+html { font-size: 100%; }
+html, body { margin: 0; }
+body {
+  background: var(--ca-bg);
+  color: var(--ca-text);
+  font-family: var(--ca-font);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+h1, h2, h3 { line-height: 1.25; font-weight: 700; }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--ca-link); }
+:focus-visible { outline: 3px solid var(--ca-focus); outline-offset: 2px; }
+.ca-mono { font-family: var(--ca-mono); font-size: 0.9375rem; white-space: nowrap; }
+
+.ca-skip {
+  position: absolute; left: 0.5rem; top: -4rem; z-index: 100;
+  background: var(--ca-surface); color: var(--ca-text); padding: 0.625rem 1rem;
+  border: 2px solid var(--ca-focus); border-radius: var(--ca-radius);
+}
+.ca-skip:focus { top: 0.5rem; }
+.ca-visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ── Header ─────────────────────────────────────────── */
+.ca-header {
+  background: var(--ca-surface);
+  border-top: 4px solid var(--ca-accent);
+  border-bottom: 1px solid var(--ca-border);
+  position: sticky; top: 0; z-index: 5;
+}
+.ca-header-main {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.5rem 1.5rem; padding: 0.625rem 1rem; max-width: 90rem; margin: 0 auto;
+}
+.ca-titles { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; flex: 1 1 18rem; }
+.ca-title { font-size: 1.375rem; margin: 0; letter-spacing: -0.01em; }
+.ca-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0 1.25rem;
+  color: var(--ca-muted); font-size: 0.875rem; min-width: 0;
+}
+.ca-file { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.ca-file-name { font-family: var(--ca-mono); font-size: 0.8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 36ch; }
+.ca-state { display: inline-flex; align-items: center; gap: 0.375rem; }
+.ca-dirty { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ca-warning); display: inline-block; }
+.ca-spacer { flex: 1; }
+.ca-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.ca-btn-group { display: inline-flex; }
+.ca-btn-group .ca-btn { border-radius: 0; }
+.ca-btn-group .ca-btn:first-child { border-radius: var(--ca-radius) 0 0 var(--ca-radius); }
+.ca-btn-group .ca-btn:last-child { border-radius: 0 var(--ca-radius) var(--ca-radius) 0; margin-left: -1px; }
+
+/* ── Buttons & inputs ───────────────────────────────── */
+.ca-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.375rem;
+  min-height: var(--ca-target); min-width: var(--ca-target);
+  border: 1px solid var(--ca-border-strong);
+  background: var(--ca-surface);
+  border-radius: var(--ca-radius);
+  padding: 0 1rem;
+  cursor: pointer;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.ca-btn:hover { background: var(--ca-surface-2); }
+.ca-btn:disabled { opacity: 0.5; cursor: default; }
+.ca-btn.primary { background: var(--ca-accent); border-color: var(--ca-accent); color: var(--ca-accent-text); font-weight: 700; }
+.ca-btn.primary:hover { background: color-mix(in srgb, var(--ca-accent) 88%, var(--ca-black)); }
+.ca-btn.danger { color: var(--ca-text); border-color: var(--ca-danger); }
+.ca-btn.danger::before { content: ""; width: 0.5rem; height: 0.5rem; background: var(--ca-danger); border-radius: 1px; }
+.ca-btn.link {
+  border: none; background: none; padding: 0 0.25rem; min-width: 0;
+  text-decoration: underline; color: var(--ca-link); font-weight: 400;
+}
+.ca-input, .ca-select, .ca-textarea {
+  border: 1px solid var(--ca-border-strong);
+  background: var(--ca-surface);
+  border-radius: var(--ca-radius);
+  padding: 0.5rem 0.625rem;
+  min-height: var(--ca-target);
+  min-width: 0;
+}
+.ca-textarea { width: 100%; min-height: 6rem; resize: vertical; }
+
+/* ── Banners ────────────────────────────────────────── */
+.ca-banners:empty { display: none; }
+.ca-banner {
+  display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center;
+  padding: 0.5rem 1rem;
+  background: var(--ca-info-bg);
+  border-bottom: 1px solid var(--ca-border);
+  border-left: 6px solid var(--ca-info);
+}
+.ca-banner.warn { background: var(--ca-warn-bg); border-left-color: var(--ca-warning); }
+.ca-banner .ca-spacer { min-width: 0.5rem; }
+
+/* ── Tabs ───────────────────────────────────────────── */
+.ca-tabs { display: flex; gap: 0.125rem; padding: 0 1rem; background: var(--ca-surface); border-bottom: 1px solid var(--ca-border); overflow-x: auto; }
+.ca-tab {
+  border: none; background: none; cursor: pointer;
+  min-height: var(--ca-target); padding: 0 0.875rem; color: var(--ca-muted);
+  border-bottom: 3px solid transparent; white-space: nowrap;
+}
+.ca-tab:hover { color: var(--ca-text); }
+.ca-tab[aria-selected="true"] { color: var(--ca-text); border-bottom-color: var(--ca-accent); font-weight: 700; }
+
+/* ── Main / cards ───────────────────────────────────── */
+#ca-root { min-height: 100vh; display: flex; flex-direction: column; }
+.ca-main { padding: 1rem; max-width: 90rem; width: 100%; margin: 0 auto; flex: 1 0 auto; }
+.ca-main:focus { outline: none; }
+.ca-card { background: var(--ca-surface); border: 1px solid var(--ca-border); border-radius: var(--ca-radius); padding: 1rem; margin-bottom: 1rem; }
+.ca-card h2, .ca-card h3 { margin: 0 0 0.75rem; font-size: 1.125rem; }
+.ca-muted { color: var(--ca-muted); }
+.ca-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); }
+.ca-kpis { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); margin-bottom: 1rem; }
+.ca-kpi { background: var(--ca-surface); border: 1px solid var(--ca-border); border-top: 4px solid var(--ca-accent); border-radius: var(--ca-radius); padding: 0.75rem 0.875rem; }
+.ca-kpi-label { color: var(--ca-muted); font-size: 0.875rem; }
+.ca-kpi-value { font-size: 1.75rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+
+/* ── Table view ─────────────────────────────────────── */
+.ca-tv-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+.ca-tv-bar .ca-input[type="search"] { width: 16rem; max-width: 100%; }
+.ca-tv-bar .ca-select { max-width: 16rem; }
+.ca-table-wrap { overflow-x: auto; background: var(--ca-surface); border: 1px solid var(--ca-border); border-radius: var(--ca-radius); }
+.ca-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.ca-table th, .ca-table td { padding: 0.5rem 0.625rem; border-bottom: 1px solid var(--ca-border); text-align: left; vertical-align: top; }
+.ca-table th { background: var(--ca-surface-2); font-weight: 700; font-size: 0.875rem; white-space: nowrap; position: sticky; top: 0; }
+.ca-table th.sortable { padding: 0; }
+.ca-sort-btn {
+  display: flex; align-items: center; gap: 0.25rem; width: 100%;
+  min-height: var(--ca-target); padding: 0 0.625rem;
+  border: none; background: none; cursor: pointer; font-weight: 700; text-align: inherit;
+}
+.ca-table th.num .ca-sort-btn { justify-content: flex-end; }
+.ca-sort { color: var(--ca-muted); font-size: 0.75rem; }
+.ca-table td.num, .ca-table th.num { text-align: right; }
+.ca-table tbody tr.clickable { cursor: pointer; }
+.ca-table tbody tr.clickable:hover { background: var(--ca-accent-soft); }
+.ca-table tbody tr.clickable:focus-visible { outline-offset: -3px; }
+.ca-table tfoot td { font-weight: 700; background: var(--ca-surface-2); border-bottom: none; }
+.ca-table .ca-empty { text-align: center; color: var(--ca-muted); padding: 1.5rem; }
+.ca-computed { color: var(--ca-muted); }
+.ca-table td.ca-long { min-width: 18rem; }
+
+/* Status pills: always carry a text label; colour is a tinted fill plus a palette outline. */
+.ca-pill {
+  --pill: var(--ca-slate);
+  display: inline-block; padding: 0 0.5rem; border-radius: 999px;
+  font-size: 0.8125rem; line-height: 1.5; white-space: nowrap;
+  color: var(--ca-text);
+  background: color-mix(in srgb, var(--pill) var(--ca-pill-mix), var(--ca-surface));
+  border: 1px solid var(--pill);
+}
+.ca-pill.grey { --pill: var(--ca-slate); }
+.ca-pill.green { --pill: var(--ca-green); }
+.ca-pill.amber, .ca-pill.orange { --pill: var(--ca-orange); }
+.ca-pill.red { --pill: var(--ca-red); }
+.ca-pill.blue { --pill: var(--ca-blue-dark); }
+.ca-pill.purple { --pill: var(--ca-purple); }
+.ca-pill.teal { --pill: var(--ca-teal); }
+.ca-pill.pink { --pill: var(--ca-pink); }
+
+/* ── Forms & dialogs ────────────────────────────────── */
+.ca-dialog {
+  border: 1px solid var(--ca-border); border-radius: 0.5rem; padding: 0;
+  background: var(--ca-surface); color: var(--ca-text);
+  width: min(36rem, calc(100vw - 2rem)); max-height: calc(100vh - 3rem);
+}
+.ca-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+.ca-dialog-head { padding: 0.875rem 1.125rem; border-bottom: 1px solid var(--ca-border); font-size: 1.125rem; margin: 0; }
+.ca-dialog-body { padding: 1rem 1.125rem; overflow-y: auto; max-height: calc(100vh - 13rem); }
+.ca-dialog-foot { padding: 0.75rem 1.125rem; border-top: 1px solid var(--ca-border); display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap; }
+.ca-dialog-foot .ca-spacer { flex: 1; }
+.ca-form { display: grid; gap: 1rem; }
+.ca-field label, .ca-field .ca-label { display: block; font-weight: 700; font-size: 0.9375rem; margin-bottom: 0.25rem; }
+.ca-field .ca-input, .ca-field .ca-select { width: 100%; }
+.ca-help { color: var(--ca-muted); font-size: 0.875rem; margin-top: 0.25rem; }
+.ca-error { color: var(--ca-danger); font-size: 0.875rem; font-weight: 700; margin-top: 0.25rem; }
+.ca-error:empty { display: none; }
+.ca-field.invalid .ca-input, .ca-field.invalid .ca-select, .ca-field.invalid .ca-textarea { border: 2px solid var(--ca-danger); }
+.ca-readonly { padding: 0.375rem 0; color: var(--ca-muted); }
+.ca-check { display: flex; align-items: center; gap: 0.5rem; font-weight: 400 !important; min-height: var(--ca-target); }
+.ca-check input { width: 1.25rem; height: 1.25rem; accent-color: var(--ca-accent); }
+.ca-kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
+.ca-kv dt { color: var(--ca-muted); }
+.ca-kv dd { margin: 0; font-family: var(--ca-mono); font-size: 0.875rem; word-break: break-all; }
+
+/* ── Landing / drop zone ────────────────────────────── */
+.ca-landing { max-width: 40rem; margin: 3rem auto; text-align: center; }
+.ca-landing h2 { font-size: 1.5rem; margin: 0 0 0.375rem; }
+.ca-landing .ca-actions { display: flex; gap: 0.625rem; justify-content: center; flex-wrap: wrap; margin: 1.25rem 0; }
+.ca-drop-hint { border: 2px dashed var(--ca-border-strong); border-radius: 0.5rem; padding: 1.75rem; color: var(--ca-muted); }
+body.ca-dragging::after {
+  content: "Drop a Carryall file, JSON or CSV to load it";
+  position: fixed; inset: 0.75rem; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  border: 3px dashed var(--ca-accent); border-radius: 0.875rem;
+  background: color-mix(in srgb, var(--ca-bg) 88%, transparent);
+  font-size: 1.125rem; font-weight: 700; pointer-events: none;
+}
+
+/* ── Bar charts (built-in, HTML) ────────────────────── */
+.ca-bars {
+  display: grid; grid-template-columns: minmax(2.5rem, max-content) minmax(4rem, 1fr) max-content;
+  gap: 0.375rem 0.625rem; align-items: center; font-size: 0.875rem; max-width: 48rem;
+}
+.ca-bar-label { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 24ch; font-weight: 700; }
+.ca-bar-track { height: 0.875rem; background: var(--ca-bar-track); border-radius: 2px; overflow: hidden; }
+.ca-bar-fill { display: block; height: 100%; min-width: 3px; background: var(--ca-bar); border-radius: 2px; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+.ca-bar-value { color: var(--ca-text); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ── Footer & toast ─────────────────────────────────── */
+.ca-footer {
+  background: var(--ca-surface); border-top: 1px solid var(--ca-border);
+  color: var(--ca-muted); font-size: 0.8125rem;
+}
+.ca-footer-inner {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.25rem 1.5rem; padding: 0.5rem 1rem; max-width: 90rem; margin: 0 auto;
+}
+.ca-footer-end { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; }
+.ca-footer .ca-btn.link { min-height: var(--ca-target); color: var(--ca-text); font-size: inherit; }
+.ca-toast {
+  position: fixed; bottom: 1.125rem; left: 50%; transform: translateX(-50%);
+  background: var(--ca-text); color: var(--ca-bg);
+  padding: 0.625rem 1rem; border-radius: 0.375rem; z-index: 60; max-width: calc(100vw - 2rem);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+}
+.ca-hidden { display: none !important; }
+
+/* ── Menu ───────────────────────────────────────────── */
+.ca-menu { position: relative; }
+.ca-menu > summary { list-style: none; }
+.ca-menu > summary::-webkit-details-marker { display: none; }
+.ca-menu-list {
+  position: absolute; right: 0; top: calc(100% + 0.25rem); z-index: 20; min-width: 15rem;
+  background: var(--ca-surface); border: 1px solid var(--ca-border-strong); border-radius: var(--ca-radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16); padding: 0.25rem; display: grid;
+}
+.ca-menu-list button {
+  border: none; background: none; text-align: left; min-height: var(--ca-target);
+  padding: 0 0.75rem; border-radius: 0.1875rem; cursor: pointer;
+}
+.ca-menu-list button:hover { background: var(--ca-surface-2); }
+
+/* ── Document properties ────────────────────────────── */
+.ca-docline {
+  border: none; background: none; padding: 0.125rem 0; cursor: pointer; text-align: left;
+  color: var(--ca-text); font-weight: 700; font-size: 0.875rem;
+  display: inline-flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; min-height: 1.75rem;
+}
+.ca-docline:hover > span:first-child { text-decoration: underline; }
+.ca-docline .ca-pill { font-weight: 400; }
+.ca-docline-empty { color: var(--ca-muted); font-weight: 400; text-decoration: underline; }
+.ca-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.ca-grid2 { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr)); }
+.ca-subhead { margin: 0.375rem 0 -0.25rem; font-size: 1rem; }
+
+@media (max-width: 40rem) {
+  .ca-main { padding: 0.75rem; }
+  .ca-file-name { max-width: 22ch; }
+  .ca-header { position: static; }
+  .ca-title { font-size: 1.25rem; }
+}
+@media print {
+  .ca-header .ca-toolbar, .ca-banners, .ca-tabs, .ca-tv-bar, .ca-footer, .ca-skip { display: none !important; }
+  .ca-header { position: static; border-top: none; }
+  body { background: #fff; }
+  .ca-table th { position: static; }
+}
+</style>
+<style id="ca-app-css">
+</style>
+</head>
+<body>
+<div id="ca-root"></div>
+<noscript id="ca-snapshot"><p>This tool needs JavaScript. Open it in Microsoft Edge or Google Chrome.</p></noscript>
+<script id="ca-core">
+/* Carryall core runtime. Do not edit inside an app file: this block is replaced
+   wholesale by tools/sync-core.mjs when the core is upgraded. App code lives in
+   <script id="ca-app">. See the README comment at the top of this file. */
+(function () {
+  'use strict';
+
+  const CORE_VERSION = '0.1.0';
+  const FORMAT = 'carryall/1';
+  const PAGE = 500;                 // rows rendered before "show more"
+  const SOFT_ROWS = 5000;           // size advisory thresholds
+  const SOFT_BYTES = 5 * 1024 * 1024;
+  const COLUMN_TYPES = ['text', 'longtext', 'number', 'currency', 'percent', 'date', 'boolean', 'choice', 'ref', 'computed'];
+  const NUMERIC = ['number', 'currency', 'percent'];
+
+  // ── State ──────────────────────────────────────────────────────────────
+  const S = {
+    app: null,            // normalised app definition
+    plugins: [],
+    viewTypes: {},        // plugin-registered view renderers
+    data: null,           // the live document envelope
+    dirty: false,
+    readOnly: false,
+    fileName: null,
+    handle: null,         // FileSystemFileHandle for save-in-place (html only)
+    tab: 0,
+    viewState: {},
+    undo: [], redo: [],
+    shell: null,          // pristine <html> clone used to build exports
+    isHome: false,
+    isLocal: location.protocol === 'file:',
+    banners: [],
+    user: null,
+    root: null,
+  };
+
+  // ── Small utilities ────────────────────────────────────────────────────
+  const ALPHA = '0123456789abcdefghjkmnpqrstvwxyz';
+  function uid(n = 10) {
+    const b = crypto.getRandomValues(new Uint8Array(n));
+    return Array.from(b, x => ALPHA[x & 31]).join('');
+  }
+  const clone = x => (x == null ? x : JSON.parse(JSON.stringify(x)));
+  const nowISO = () => new Date().toISOString();
+  const pad = n => String(n).padStart(2, '0');
+  function todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+  function parseDate(s) {
+    if (!s) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  function daysBetween(a, b) {
+    const x = parseDate(a), y = parseDate(b);
+    return x && y ? Math.round((y - x) / 86400000) : null;
+  }
+  function yearsBetween(a, b) {
+    const d = daysBetween(a, b);
+    return d == null ? null : d / 365.25;
+  }
+  function addDays(iso, n) {
+    const d = parseDate(iso);
+    if (!d) return null;
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+  function addMonths(iso, n) {
+    const d = parseDate(iso);
+    if (!d) return null;
+    d.setMonth(d.getMonth() + n);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+  const titleCase = k => k.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function cmpSemver(a, b) {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return Math.sign(d); }
+    return 0;
+  }
+  function debounce(fn, ms) {
+    let t;
+    return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  }
+  function fmtBytes(n) {
+    return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB';
+  }
+
+  // DOM builder: h('div', {class: 'x', onclick: fn}, 'text', child, [more])
+  function h(tag, props, ...kids) {
+    if (props != null && (typeof props !== 'object' || props instanceof Node || Array.isArray(props))) { kids.unshift(props); props = null; }
+    const el = document.createElement(tag);
+    if (props) {
+      for (const [k, v] of Object.entries(props)) {
+        if (v == null || v === false) continue;
+        if (k === 'class') el.className = v;
+        else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+        else if (k === 'dataset') Object.assign(el.dataset, v);
+        else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+        else if (['value', 'checked', 'disabled', 'selected', 'hidden', 'open', 'indeterminate'].includes(k)) el[k] = v;
+        else el.setAttribute(k, v === true ? '' : v);
+      }
+    }
+    for (const k of kids.flat(Infinity)) {
+      if (k == null || k === false || k === true) continue;
+      el.append(k instanceof Node ? k : String(k));
+    }
+    return el;
+  }
+
+  // ── App definition ─────────────────────────────────────────────────────
+  function defineApp(def) {
+    if (S.app) throw new Error('Carryall.app() called twice');
+    const fail = m => { throw new Error('Carryall app definition: ' + m); };
+    if (!def || !def.id) fail('"id" is required');
+    if (!Number.isInteger(def.schemaVersion) || def.schemaVersion < 1) fail('"schemaVersion" must be an integer >= 1');
+    const app = {
+      name: def.id, version: '0.0.0', description: '', locale: 'en-GB', currency: 'GBP',
+      home: null, versionUrl: null, identity: null, migrations: {}, fixtures: [], views: [],
+      ...def,
+    };
+    app.tables = {};
+    for (const [tk, t] of Object.entries(def.tables || {})) app.tables[tk] = normTable(tk, t);
+    app.settings = def.settings ? normTable('settings', { label: 'Settings', ...def.settings }) : null;
+    if (!app.views.length) app.views = Object.keys(app.tables).map(t => ({ type: 'table', table: t }));
+    app.views = app.views.map((v, i) => ({ title: v.title || (v.table && app.tables[v.table]?.label) || `View ${i + 1}`, ...v }));
+    S.app = app;
+    return app;
+  }
+  function normTable(key, t) {
+    const columns = {};
+    for (const [ck, c] of Object.entries(t.columns || {})) {
+      const col = typeof c === 'string' ? { type: c } : { ...c };
+      col.key = ck;
+      col.type = col.type || 'text';
+      col.label = col.label || titleCase(ck);
+      columns[ck] = col;
+    }
+    const keys = Object.keys(columns);
+    return {
+      key, label: t.label || titleCase(key), singular: t.singular || 'row', ...t, columns,
+      display: t.display || keys.find(k => columns[k].type === 'text') || keys[0],
+    };
+  }
+
+  // ── Document properties (common to every Carryall tool) ────────────────
+  // Stored in doc.properties. Separate from meta.revision, which just counts saves.
+  const PROPERTY_DEFAULTS = {
+    projectNumber: null, projectName: null,
+    createdBy: null, updatedBy: null,
+    checkedBy: null, checkedAt: null, checkedHash: null,
+    revisions: [],       // [{ rev, date, description, by, checkedBy }], oldest first
+  };
+  const propsOn = () => S.app.properties !== false;
+  const requiredProps = () => (S.app.properties && S.app.properties.required) || ['projectNumber', 'projectName'];
+  function currentUser() {
+    if (S.user) return S.user;
+    try { return localStorage.getItem('carryall.user') || null; } catch { return null; }
+  }
+  function setCurrentUser(name) {
+    try { name ? localStorage.setItem('carryall.user', name) : localStorage.removeItem('carryall.user'); } catch { /* storage blocked */ }
+  }
+  // FNV-1a over the data (not the properties), used to tell whether a check is still current.
+  function dataHash(doc = S.data) {
+    const str = JSON.stringify([doc.tables, doc.settings]);
+    let x = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) { x ^= str.charCodeAt(i); x = Math.imul(x, 0x01000193) >>> 0; }
+    return x.toString(16).padStart(8, '0');
+  }
+  function checkState(doc = S.data) {
+    const p = doc.properties;
+    if (!p.checkedBy) return { state: 'unchecked' };
+    return { state: p.checkedHash === dataHash(doc) ? 'checked' : 'stale', by: p.checkedBy, at: p.checkedAt };
+  }
+  const currentRevision = (doc = S.data) => doc.properties.revisions[doc.properties.revisions.length - 1] || null;
+  function nextRevisionCode(prev) {
+    if (!prev) return (S.app.properties && S.app.properties.firstRevision) || 'P01';
+    const m = /^(.*?)(\d+)$/.exec(prev);
+    if (m) return m[1] + String(+m[2] + 1).padStart(m[2].length, '0');
+    if (/^[A-Y]$/i.test(prev)) return String.fromCharCode(prev.charCodeAt(0) + 1);
+    return '';
+  }
+  // Wording follows the save mode: a plain download is not called "saving".
+  const saveWord = () => (S.app.saveInPlace ? 'Save' : 'Download');
+  const unsavedWord = () => (S.app.saveInPlace ? 'unsaved' : 'not downloaded');
+  const missingProps = () => (propsOn() ? requiredProps().filter(k => !S.data.properties[k]) : []);
+
+  // ── Document envelope ──────────────────────────────────────────────────
+  function settingsDefaults() {
+    const out = {};
+    if (!S.app.settings) return out;
+    for (const c of Object.values(S.app.settings.columns)) {
+      if (c.type === 'computed') continue;
+      out[c.key] = typeof c.default === 'function' ? c.default() : (c.default ?? null);
+    }
+    return out;
+  }
+  function newDocument() {
+    const doc = {
+      format: FORMAT,
+      app: { id: S.app.id, version: S.app.version, schemaVersion: S.app.schemaVersion },
+      meta: { docId: uid(16), revision: 0, created: nowISO(), savedAt: null, coreVersion: CORE_VERSION },
+      properties: { createdBy: currentUser() },
+      settings: settingsDefaults(),
+      tables: Object.fromEntries(Object.keys(S.app.tables).map(k => [k, []])),
+    };
+    if (typeof S.app.onNew === 'function') S.app.onNew(doc, makeApi());
+    return normalise(doc);
+  }
+  function normalise(doc) {
+    doc.format = doc.format || FORMAT;
+    doc.app = doc.app || {};
+    doc.meta = { revision: 0, savedAt: null, ...(doc.meta || {}) };
+    if (!doc.meta.docId) doc.meta.docId = uid(16);
+    doc.properties = { ...PROPERTY_DEFAULTS, ...(doc.properties || {}) };
+    if (doc.meta.savedBy && !doc.properties.updatedBy) doc.properties.updatedBy = doc.meta.savedBy;
+    delete doc.meta.savedBy;
+    if (!Array.isArray(doc.properties.revisions)) doc.properties.revisions = [];
+    doc.settings = { ...settingsDefaults(), ...(doc.settings || {}) };
+    doc.tables = doc.tables || {};
+    for (const tk of Object.keys(S.app.tables)) {
+      if (!Array.isArray(doc.tables[tk])) doc.tables[tk] = [];
+      const seen = new Set();
+      for (const r of doc.tables[tk]) {
+        if (!r.id || seen.has(r.id)) r.id = uid();
+        seen.add(r.id);
+      }
+    }
+    return doc; // unknown tables/columns are preserved untouched
+  }
+  function checkEnvelope(doc) {
+    if (!doc || typeof doc !== 'object') throw new Error('No data found in this file.');
+    if (doc.format && !String(doc.format).startsWith('carryall/')) throw new Error(`Unrecognised data format "${doc.format}".`);
+    const id = doc.app && doc.app.id;
+    if (id && id !== S.app.id) throw new Error(`This file belongs to the tool "${id}", not "${S.app.id}".`);
+  }
+  function migrate(doc) {
+    const target = S.app.schemaVersion;
+    const from = doc.app.schemaVersion || 1;
+    const api = makeApi();
+    for (let v = from + 1; v <= target; v++) {
+      const fn = S.app.migrations[v];
+      if (typeof fn !== 'function') throw new Error(`Missing migration to schema ${v}.`);
+      doc = fn(doc, { uid, api, fromVersion: from }) || doc;
+      doc.app.schemaVersion = v;
+    }
+    doc.meta = doc.meta || {};
+    doc.meta.migrations = (doc.meta.migrations || []).concat({ from, to: target, at: nowISO(), appVersion: S.app.version });
+    return doc;
+  }
+
+  // Serialise with one row per line: readable in a text editor and diff-friendly.
+  function serialise(doc) {
+    const j = v => JSON.stringify(v).replace(/</g, '\\u003c');
+    const lines = ['{'];
+    const keys = Object.keys(doc).filter(k => k !== 'tables');
+    keys.forEach(k => lines.push(`  ${j(k)}: ${j(doc[k])},`));
+    lines.push('  "tables": {');
+    const tks = Object.keys(doc.tables || {});
+    tks.forEach((tk, i) => {
+      const rows = doc.tables[tk] || [];
+      if (!rows.length) { lines.push(`    ${j(tk)}: []${i < tks.length - 1 ? ',' : ''}`); return; }
+      lines.push(`    ${j(tk)}: [`);
+      rows.forEach((r, ri) => lines.push(`      ${j(r)}${ri < rows.length - 1 ? ',' : ''}`));
+      lines.push(`    ]${i < tks.length - 1 ? ',' : ''}`);
+    });
+    lines.push('  }', '}');
+    return lines.join('\n');
+  }
+  function extractFromHtml(text) {
+    const doc = new DOMParser().parseFromString(text, 'text/html'); // never executes scripts
+    const el = doc.getElementById('ca-data');
+    if (!el) throw new Error('This HTML file is not a Carryall file (no data block found).');
+    const raw = el.textContent.trim();
+    if (!raw || raw === 'null') throw new Error('This file is a blank tool with no data in it.');
+    return JSON.parse(raw);
+  }
+
+  // ── Loading ────────────────────────────────────────────────────────────
+  async function loadDocument(doc, { fileName = null, handle = null, source = 'file' } = {}) {
+    checkEnvelope(doc);
+    doc = clone(doc);
+    doc.app = doc.app || { id: S.app.id, schemaVersion: 1 };
+    const fileSchema = doc.app.schemaVersion || 1;
+    const fileAppVersion = doc.app.version || '?';
+    let dirty = false, readOnly = false;
+    clearBanners('load');
+    if (fileSchema > S.app.schemaVersion) {
+      readOnly = true;
+      addBanner('load', 'warn', [
+        h('strong', 'Read-only: '),
+        `this file was saved by a newer version of ${S.app.name} (v${fileAppVersion}, schema ${fileSchema}). `,
+        S.app.home && !S.isHome ? h('button', { class: 'ca-btn link', onclick: openInHome }, 'Open it in the latest tool') : 'Editing is disabled to protect it.',
+      ]);
+    } else if (fileSchema < S.app.schemaVersion) {
+      doc = migrate(doc);
+      dirty = true;
+      addBanner('load', 'info', [
+        h('strong', 'Upgraded: '),
+        `data from v${fileAppVersion} (schema ${fileSchema}) was migrated to schema ${S.app.schemaVersion}. ${saveWord()} to keep the upgraded copy.`,
+      ]);
+    }
+    normalise(doc);
+    S.data = doc;
+    S.readOnly = readOnly;
+    S.dirty = dirty;
+    S.fileName = fileName;
+    S.handle = handle;
+    S.undo = []; S.redo = [];
+    S.viewState = {};
+    if (S.tab >= S.app.views.length) S.tab = 0;
+    sizeAdvisory();
+    render();
+    if (dirty) scheduleRecovery();
+    await offerRecovery(source);
+  }
+  async function openFile(file, handle = null) {
+    const name = file.name || 'file';
+    const ext = name.toLowerCase().split('.').pop();
+    const text = await file.text();
+    if (ext === 'csv') return importCsv(text, name);
+    let doc;
+    try {
+      doc = ext === 'json' ? JSON.parse(text) : extractFromHtml(text);
+    } catch (e) {
+      return alertDialog('Could not open file', e.message);
+    }
+    if (!(await guardDirty())) return;
+    try {
+      await loadDocument(doc, { fileName: name, handle: ext === 'html' || ext === 'htm' ? handle : null, source: 'file' });
+      toast(`Opened ${name}`);
+    } catch (e) {
+      alertDialog('Could not open file', e.message);
+    }
+  }
+  // A plain file input works everywhere. The File System Access picker is only used when the
+  // app saves in place (it needs a writable handle), and any refusal falls back to the input.
+  function pickWithInput() {
+    const input = h('input', { type: 'file', accept: '.html,.htm,.json,.csv', onchange: () => input.files[0] && openFile(input.files[0]) });
+    input.click();
+  }
+  // After an await the browser may block opening a file input, so ask for a fresh click.
+  function chooseAgain() {
+    return dialog({ title: 'Choose the file again', body: h('p', 'This browser would not let the tool read the file directly. Choose it again to open it.'),
+      buttons: [{ label: 'Cancel', value: false }, { label: 'Choose file', primary: true, onClick: () => { pickWithInput(); } }] });
+  }
+  async function pickAndOpen() {
+    if (!S.app.saveInPlace || !window.showOpenFilePicker) return pickWithInput();
+    let handle;
+    try {
+      [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'Carryall files', accept: { 'text/html': ['.html', '.htm'], 'application/json': ['.json'], 'text/csv': ['.csv'] } }],
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      console.warn('[carryall] file picker unavailable, using file input', e);
+      return chooseAgain();
+    }
+    let file;
+    try { file = await handle.getFile(); } catch (e) {
+      console.warn('[carryall] browser refused access to the picked file, using file input', e);
+      return chooseAgain();
+    }
+    return openFile(file, handle);
+  }
+  async function startNew() {
+    if (!(await guardDirty())) return;
+    clearBanners('load'); clearBanners('recovery');
+    S.data = newDocument();
+    S.fileName = null; S.handle = null; S.readOnly = false; S.dirty = false;
+    S.undo = []; S.redo = []; S.viewState = {}; S.tab = 0;
+    render();
+  }
+
+  // ── Mutations & undo ───────────────────────────────────────────────────
+  function snapshot() { return JSON.stringify({ tables: S.data.tables, settings: S.data.settings, properties: S.data.properties }); }
+  function restore(snap) { const s = JSON.parse(snap); S.data.tables = s.tables; S.data.settings = s.settings; S.data.properties = s.properties; }
+  function mutate(fn) {
+    if (!S.data) throw new Error('No document is open.');
+    if (S.readOnly) { toast('This file is read-only.'); return; }
+    S.undo.push(snapshot());
+    if (S.undo.length > 100) S.undo.shift();
+    S.redo = [];
+    const out = fn(S.data);
+    markDirty();
+    return out;
+  }
+  function undo() { if (!S.undo.length || S.readOnly) return; S.redo.push(snapshot()); restore(S.undo.pop()); markDirty(); }
+  function redo() { if (!S.redo.length || S.readOnly) return; S.undo.push(snapshot()); restore(S.redo.pop()); markDirty(); }
+  function markDirty() { S.dirty = true; scheduleRecovery(); render(); }
+
+  function tableRows(t) {
+    if (!S.data) return [];
+    if (!S.app.tables[t]) throw new Error(`Unknown table "${t}"`);
+    return S.data.tables[t];
+  }
+  function insertRow(t, row) {
+    return mutate(d => {
+      const r = { id: uid(), ...row };
+      d.tables[t].push(r);
+      return r.id;
+    });
+  }
+  function updateRow(t, id, patch) {
+    mutate(d => {
+      const r = d.tables[t].find(x => x.id === id);
+      if (!r) throw new Error(`Row ${id} not found in ${t}`);
+      Object.assign(r, patch, { id });
+    });
+  }
+  function removeRow(t, id) {
+    mutate(d => { d.tables[t] = d.tables[t].filter(x => x.id !== id); });
+  }
+  function referencesTo(t, id) {
+    let n = 0; const where = [];
+    for (const [tk, tdef] of Object.entries(S.app.tables)) {
+      for (const c of Object.values(tdef.columns)) {
+        if (c.type !== 'ref' || c.table !== t) continue;
+        const k = S.data.tables[tk].filter(r => r[c.key] === id).length;
+        if (k) { n += k; where.push(`${k} in ${tdef.label}`); }
+      }
+    }
+    return { n, where };
+  }
+
+  // ── Values & formatting ────────────────────────────────────────────────
+  const nfCache = {};
+  function nf(opts) {
+    const k = JSON.stringify(opts);
+    return nfCache[k] || (nfCache[k] = new Intl.NumberFormat(S.app.locale, opts));
+  }
+  let dfCache;
+  function formatAs(type, v, col = {}) {
+    if (v == null || v === '' || (typeof v === 'number' && !isFinite(v))) return '';
+    switch (type) {
+      case 'number': return nf({ maximumFractionDigits: col.decimals ?? 2, minimumFractionDigits: col.decimals ?? 0 }).format(v);
+      case 'integer': return nf({ maximumFractionDigits: 0 }).format(v);
+      case 'currency': return nf({ style: 'currency', currency: col.currency || S.app.currency }).format(v);
+      case 'percent': return nf({ maximumFractionDigits: col.decimals ?? 1 }).format(v) + '%';
+      case 'date': {
+        const d = parseDate(v);
+        dfCache = dfCache || new Intl.DateTimeFormat(S.app.locale, { day: 'numeric', month: 'long', year: 'numeric' });
+        return d ? dfCache.format(d) : String(v);
+      }
+      case 'boolean': return v ? 'Yes' : 'No';
+      default: return String(v);
+    }
+  }
+  function rawValue(t, row, key) {
+    const col = colDef(t, key);
+    if (col && col.type === 'computed') {
+      try { return col.fn(row, makeApi()); } catch (e) { console.warn(`[carryall] computed ${t}.${key} failed`, e); return NaN; }
+    }
+    return row[key];
+  }
+  function colDef(t, key) { return t === 'settings' ? S.app.settings?.columns[key] : S.app.tables[t]?.columns[key]; }
+  function displayOf(t, row) {
+    if (!row) return '';
+    const td = S.app.tables[t];
+    return typeof td.display === 'function' ? td.display(row) : String(rawValue(t, row, td.display) ?? '');
+  }
+  function formatCell(t, row, key) {
+    const col = colDef(t, key);
+    const v = rawValue(t, row, key);
+    if (!col) return v == null ? '' : String(v);
+    if (col.type === 'ref') {
+      const target = tableRows(col.table).find(r => r.id === v);
+      if (!target) return v ? '(missing)' : '';
+      return col.display ? String(rawValue(col.table, target, col.display) ?? '') : displayOf(col.table, target);
+    }
+    if (col.type === 'computed') {
+      if (typeof v === 'number' && isNaN(v)) return '#ERR';
+      return formatAs(col.format || (typeof v === 'number' ? 'number' : 'text'), v, col);
+    }
+    return formatAs(col.type, v, col);
+  }
+  function isNumericCol(col) {
+    return NUMERIC.includes(col.type) || (col.type === 'computed' && ['number', 'integer', 'currency', 'percent'].includes(col.format));
+  }
+  function sortKey(t, row, key) {
+    const col = colDef(t, key);
+    if (col?.type === 'ref') return formatCell(t, row, key).toLowerCase();
+    const v = rawValue(t, row, key);
+    return typeof v === 'string' ? v.toLowerCase() : v;
+  }
+
+  // ── Public API handed to views, computed columns, plugins ──────────────
+  function makeApi() {
+    return {
+      get doc() { return S.data; },
+      get app() { return S.app; },
+      get settings() { return S.data ? S.data.settings : settingsDefaults(); },
+      get readOnly() { return S.readOnly; },
+      get today() { return todayISO(); },
+      get properties() { return S.data ? S.data.properties : null; },
+      get user() { return currentUser(); },
+      get revision() { return S.data ? currentRevision() : null; },
+      setProperties: patch => mutate(d => Object.assign(d.properties, patch)),
+      openProperties,
+      rows: tableRows,
+      row: (t, id) => tableRows(t).find(r => r.id === id) || null,
+      value: rawValue,
+      display: displayOf,
+      format: formatCell,
+      formatAs,
+      sum: (t, key, where) => tableRows(t).filter(where || (() => true)).reduce((s, r) => s + (Number(rawValue(t, r, key)) || 0), 0),
+      count: (t, where) => tableRows(t).filter(where || (() => true)).length,
+      insert: insertRow, update: updateRow, remove: removeRow,
+      setSettings: patch => mutate(d => Object.assign(d.settings, patch)),
+      openForm,
+      toast, h, ui: UI, util: Util,
+      rerender: render,
+    };
+  }
+
+  // ── Recovery (IndexedDB autosave of unsaved work) ──────────────────────
+  const IDB = {
+    db: null,
+    open() {
+      if (this.db) return Promise.resolve(this.db);
+      return new Promise((res, rej) => {
+        const r = indexedDB.open('carryall-recovery', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('docs', { keyPath: 'key' });
+        r.onsuccess = () => res(this.db = r.result);
+        r.onerror = () => rej(r.error);
+      });
+    },
+    async tx(mode, fn) {
+      const db = await this.open();
+      return new Promise((res, rej) => {
+        const t = db.transaction('docs', mode);
+        const out = fn(t.objectStore('docs'));
+        t.oncomplete = () => res(out && out.result);
+        t.onerror = () => rej(t.error);
+      });
+    },
+    put: v => IDB.tx('readwrite', s => s.put(v)),
+    get: k => IDB.tx('readonly', s => s.get(k)),
+    del: k => IDB.tx('readwrite', s => s.delete(k)),
+    all: () => IDB.tx('readonly', s => s.getAll()),
+  };
+  const recKey = () => `${S.app.id}/${S.data.meta.docId}`;
+  const scheduleRecovery = debounce(() => {
+    if (!S.data || !S.dirty) return;
+    IDB.put({ key: recKey(), appId: S.app.id, fileName: S.fileName, at: nowISO(), data: clone(S.data) }).catch(e => console.warn('[carryall] recovery save failed', e));
+  }, 800);
+  async function offerRecovery(source) {
+    if (source === 'recovery') return;
+    let rec;
+    try { rec = await IDB.get(recKey()); } catch { return; }
+    if (!rec) return;
+    const same = JSON.stringify([rec.data.tables, rec.data.settings]) === JSON.stringify([S.data.tables, S.data.settings]);
+    if (same || (S.data.meta.savedAt && rec.at < S.data.meta.savedAt)) return;
+    addBanner('recovery', 'warn', [
+      h('strong', 'Recovered changes: '),
+      `this document has edits that were ${unsavedWord()}, from ${fmtDateTime(rec.at)}.`,
+      h('span', { class: 'ca-spacer' }),
+      h('button', { class: 'ca-btn primary', onclick: () => restoreRecovery(rec) }, 'Restore them'),
+      h('button', { class: 'ca-btn', onclick: () => { IDB.del(rec.key); clearBanners('recovery'); render(); } }, 'Discard'),
+    ]);
+    render();
+  }
+  async function restoreRecovery(rec) {
+    clearBanners('recovery');
+    await loadDocument(rec.data, { fileName: rec.fileName, source: 'recovery' });
+    S.dirty = true;
+    render();
+    toast(`Changes restored. Remember to ${saveWord().toLowerCase()}.`);
+  }
+
+  // ── Saving / exporting ─────────────────────────────────────────────────
+  function captureShell() {
+    const shell = document.documentElement.cloneNode(true);
+    const keep = el => el.id?.startsWith('ca-') || ['META', 'TITLE', 'LINK'].includes(el.tagName) && !el.hasAttribute('data-ca-transient');
+    for (const part of [shell.querySelector('head'), shell.querySelector('body')]) {
+      if (!part) continue;
+      for (const el of [...part.children]) if (!keep(el)) el.remove();
+    }
+    shell.querySelectorAll('[data-ca-transient]').forEach(el => el.remove());
+    const root = shell.querySelector('#ca-root');
+    if (root) root.textContent = '';
+    for (const a of [...shell.attributes]) if (!['lang', 'dir'].includes(a.name) && !a.name.startsWith('data-ca-')) shell.removeAttribute(a.name);
+    S.shell = shell;
+  }
+  function buildFile(doc) {
+    const shell = S.shell.cloneNode(true);
+    shell.setAttribute('data-ca-core', CORE_VERSION);
+    shell.setAttribute('data-ca-app', S.app.id);
+    shell.setAttribute('data-ca-app-version', S.app.version);
+    const dataEl = shell.querySelector('#ca-data');
+    dataEl.textContent = doc ? '\n' + serialise(doc) + '\n' : 'null';
+    const snap = shell.querySelector('#ca-snapshot');
+    if (snap) snap.textContent = doc ? snapshotHtml(doc) : '';
+    const title = shell.querySelector('title');
+    if (title) title.textContent = S.app.name;
+    return '<!DOCTYPE html>\n' + shell.outerHTML + '\n';
+  }
+  // Static, script-free rendering of the data for readers without JavaScript.
+  function snapshotHtml(doc) {
+    const out = [`\n<div style="font-family:system-ui,sans-serif;padding:16px;max-width:1200px">`,
+      `<h1>${esc(S.app.name)}</h1>`,
+      `<p>Read-only snapshot (JavaScript is disabled). Saved ${esc(doc.meta.savedAt || '')}, revision ${esc(doc.meta.revision)}.`,
+      S.app.home ? ` Open the live tool at <a href="${esc(S.app.home)}">${esc(S.app.home)}</a> and load this file.` : '',
+      ` The raw data is the JSON inside &lt;script id="ca-data"&gt; in this file's source.</p>`];
+    if (propsOn()) {
+      const pr = doc.properties || {};
+      const st = checkState(doc);
+      const kv = [['Project number', pr.projectNumber], ['Project name', pr.projectName], ['Created by', pr.createdBy], ['Updated by', pr.updatedBy],
+        ['Checked by', pr.checkedBy ? `${pr.checkedBy} (${(pr.checkedAt || '').slice(0, 10)})${st.state === 'stale' ? ', data changed since' : ''}` : 'not checked']];
+      out.push('<table border="1" cellspacing="0" cellpadding="4">' + kv.map(([k, v]) => `<tr><th align="left">${esc(k)}</th><td>${esc(v || '')}</td></tr>`).join('') + '</table>');
+      if ((pr.revisions || []).length) {
+        out.push('<h2>Revisions</h2><table border="1" cellspacing="0" cellpadding="4"><tr><th>Rev</th><th>Date</th><th>Description</th><th>By</th><th>Checked</th></tr>');
+        for (const r of pr.revisions) out.push(`<tr><td>${esc(r.rev)}</td><td>${esc(r.date)}</td><td>${esc(r.description)}</td><td>${esc(r.by)}</td><td>${esc(r.checkedBy)}</td></tr>`);
+        out.push('</table>');
+      }
+    }
+    for (const [tk, td] of Object.entries(S.app.tables)) {
+      const cols = Object.values(td.columns).filter(c => !c.hidden);
+      const rows = doc.tables[tk] || [];
+      out.push(`<h2>${esc(td.label)} (${rows.length})</h2><table border="1" cellspacing="0" cellpadding="4"><thead><tr>`);
+      out.push(cols.map(c => `<th>${esc(c.label)}</th>`).join(''), '</tr></thead><tbody>');
+      const prev = S.data; S.data = doc;
+      try {
+        for (const r of rows) out.push('<tr>' + cols.map(c => `<td>${esc(formatCell(tk, r, c.key))}</td>`).join('') + '</tr>');
+      } finally { S.data = prev; }
+      out.push('</tbody></table>');
+    }
+    out.push('</div>\n');
+    return out.join('\n');
+  }
+  function suggestedName() {
+    if (S.fileName && /\.html?$/i.test(S.fileName)) return S.fileName;
+    const pn = propsOn() && S.data.properties.projectNumber;
+    const base = `${pn ? pn + ' ' : ''}${S.app.fileName || S.app.id}`;
+    return base.replace(/[\\/:*?"<>|]+/g, '-') + '.html';
+  }
+  function prepareForSave() {
+    const doc = clone(S.data);
+    doc.format = FORMAT;
+    doc.app = { id: S.app.id, version: S.app.version, schemaVersion: S.app.schemaVersion };
+    doc.meta.revision = (doc.meta.revision || 0) + 1;
+    doc.meta.savedAt = nowISO();
+    doc.meta.coreVersion = CORE_VERSION;
+    doc.properties.updatedBy = currentUser() || doc.properties.updatedBy || null;
+    if (!doc.properties.createdBy) doc.properties.createdBy = doc.properties.updatedBy;
+    return doc;
+  }
+  async function writeHandle(handle, text) {
+    if (handle.requestPermission && (await handle.requestPermission({ mode: 'readwrite' })) !== 'granted') throw new Error('Permission to write the file was not granted.');
+    const w = await handle.createWritable();
+    await w.write(text);
+    await w.close();
+  }
+  function download(text, name, type = 'text/html') {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = h('a', { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  async function save({ as = false } = {}) {
+    if (!S.data) return;
+    if (S.readOnly) return alertDialog('Read-only', 'This file was saved by a newer version of the tool and cannot be saved from here.');
+    if (propsOn() && (missingProps().length || !currentUser())) {
+      if (!(await openProperties({ reason: `Please complete the document details before you ${saveWord().toLowerCase()}.` }))) return;
+    }
+    const doc = prepareForSave();
+    const html = buildFile(doc);
+    // Default: a plain download, which works everywhere. Apps may opt in to writing the
+    // file in place (Edge/Chrome File System Access API); any refusal falls back to download.
+    let how;
+    const fallback = reason => {
+      download(html, suggestedName());
+      how = `Downloaded ${suggestedName()}${reason ? ` (${reason})` : ''}. Upload it to replace the previous copy.`;
+    };
+    if (!S.app.saveInPlace) fallback();
+    else {
+      try {
+        if (!as && S.handle) {
+          await writeHandle(S.handle, html);
+          how = `Saved to ${S.handle.name}`;
+        } else if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({ suggestedName: suggestedName(), types: [{ description: 'Carryall file', accept: { 'text/html': ['.html'] } }] });
+          await writeHandle(handle, html);
+          S.handle = handle; S.fileName = handle.name;
+          how = `Saved to ${handle.name}`;
+        } else fallback();
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        console.warn('[carryall] save in place failed, downloading instead', e);
+        S.handle = null;
+        fallback('could not write the file directly');
+      }
+    }
+    IDB.del(recKey()).catch(() => {});
+    S.data.meta = doc.meta;
+    S.data.app = doc.app;
+    S.data.properties = doc.properties;
+    S.dirty = false;
+    clearBanners('load'); clearBanners('recovery');
+    sizeAdvisory(html.length);
+    render();
+    toast(how);
+  }
+  function exportJson() {
+    download(serialise(prepareForSave()), `${S.app.fileName || S.app.id}.json`, 'application/json');
+  }
+
+  // ── CSV ────────────────────────────────────────────────────────────────
+  function parseCsv(text) {
+    text = text.replace(/^﻿/, '');
+    const rows = []; let row = [], f = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; }
+        else f += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(f); f = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(f); rows.push(row); row = []; f = '';
+      } else f += c;
+    }
+    if (f !== '' || row.length) { row.push(f); rows.push(row); }
+    return rows.filter(r => r.some(x => x.trim() !== ''));
+  }
+  const csvCell = v => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  function exportCsv(t) {
+    const td = S.app.tables[t];
+    const cols = Object.values(td.columns);
+    const lines = [['id', ...cols.map(c => c.label)].map(csvCell).join(',')];
+    for (const r of tableRows(t)) {
+      lines.push([r.id, ...cols.map(c => {
+        if (c.type === 'ref') return formatCell(t, r, c.key);
+        const v = rawValue(t, r, c.key);
+        return v == null || (typeof v === 'number' && isNaN(v)) ? '' : String(v);
+      })].map(csvCell).join(','));
+    }
+    download('﻿' + lines.join('\r\n'), `${S.app.fileName || S.app.id}-${t}.csv`, 'text/csv');
+  }
+  function coerce(col, s, t) {
+    s = (s ?? '').trim();
+    if (s === '') return null;
+    switch (col.type) {
+      case 'number': case 'currency': case 'percent': {
+        const neg = /^\(.*\)$/.test(s);
+        const n = parseFloat(s.replace(/[^0-9.\-eE]/g, ''));
+        return isNaN(n) ? null : neg ? -n : n;
+      }
+      case 'boolean': return /^(true|yes|y|1|x|✓)$/i.test(s);
+      case 'date': {
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        const m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
+        if (!m) return null;
+        const [d, mo] = S.app.locale === 'en-US' ? [m[2], m[1]] : [m[1], m[2]];
+        return `${m[3]}-${pad(+mo)}-${pad(+d)}`;
+      }
+      case 'ref': {
+        const rows = tableRows(col.table);
+        const hit = rows.find(r => r.id === s) || rows.find(r => displayOf(col.table, r).toLowerCase() === s.toLowerCase());
+        return hit ? hit.id : null;
+      }
+      default: return s;
+    }
+  }
+  async function importCsv(text, name) {
+    if (!S.data) S.data = newDocument();
+    if (S.readOnly) return alertDialog('Read-only', 'This file cannot be edited.');
+    const grid = parseCsv(text);
+    if (grid.length < 2) return alertDialog('Import CSV', 'The CSV file has no data rows.');
+    const tks = Object.keys(S.app.tables);
+    let t = tks[0];
+    if (tks.length > 1) {
+      const sel = h('select', { class: 'ca-select' }, tks.map(k => h('option', { value: k }, S.app.tables[k].label)));
+      const guess = tks.find(k => name.toLowerCase().includes(k.toLowerCase()));
+      if (guess) sel.value = guess;
+      const ok = await dialog({
+        title: `Import ${name}`,
+        body: h('div', { class: 'ca-form' }, makeField('Add rows to table', sel).wrap,
+          h('p', { class: 'ca-muted' }, `${grid.length - 1} rows. Columns are matched by name; rows with a matching id are updated.`)),
+        buttons: [{ label: 'Cancel', value: false }, { label: 'Import', value: true, primary: true }],
+      });
+      if (!ok) return;
+      t = sel.value;
+    }
+    const td = S.app.tables[t];
+    const header = grid[0].map(x => x.trim().toLowerCase());
+    const map = header.map(hd => hd === 'id' ? 'id' : Object.values(td.columns).find(c => c.type !== 'computed' && (c.key.toLowerCase() === hd || c.label.toLowerCase() === hd))?.key || null);
+    const ignored = grid[0].filter((_, i) => !map[i]);
+    let added = 0, updated = 0;
+    mutate(d => {
+      for (const line of grid.slice(1)) {
+        const rec = {};
+        map.forEach((k, i) => { if (k && k !== 'id') rec[k] = coerce(td.columns[k], line[i], t); });
+        const idIdx = map.indexOf('id');
+        const existing = idIdx >= 0 && d.tables[t].find(r => r.id === line[idIdx]);
+        if (existing) { Object.assign(existing, rec); updated++; }
+        else { d.tables[t].push({ id: uid(), ...rec }); added++; }
+      }
+    });
+    toast(`Imported into ${td.label}: ${added} added, ${updated} updated${ignored.length ? `. Ignored columns: ${ignored.join(', ')}` : ''}`);
+  }
+
+  // ── Home / hand-off / update check ─────────────────────────────────────
+  function homeUrl() { try { return S.app.home ? new URL(S.app.home, location.href) : null; } catch { return null; } }
+  function computeIsHome() {
+    const u = homeUrl();
+    if (!u) return false;
+    const norm = p => p.replace(/\/index\.html?$/i, '/');
+    return u.origin === location.origin && norm(u.pathname) === norm(location.pathname);
+  }
+  function openInHome() {
+    const u = homeUrl();
+    if (!u) return;
+    u.hash = 'ca-handoff';
+    const w = window.open(u.href, '_blank');
+    if (!w) return alertDialog('Pop-up blocked', `Allow pop-ups for this file, or open ${S.app.home} and load this file there.`);
+    if (!S.data) return;
+    const payload = { type: 'carryall:handoff', appId: S.app.id, fileName: S.fileName, data: clone(S.data) };
+    const onMsg = e => {
+      if (e.source !== w || e.data?.type !== 'carryall:ready') return;
+      w.postMessage(payload, u.origin);
+      window.removeEventListener('message', onMsg);
+      toast('Sent to the latest version of the tool.');
+    };
+    window.addEventListener('message', onMsg);
+    setTimeout(() => window.removeEventListener('message', onMsg), 120000);
+  }
+  function listenForHandoff() {
+    if (location.hash !== '#ca-handoff' || !window.opener) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    const onMsg = async e => {
+      if (e.source !== window.opener || e.data?.type !== 'carryall:handoff' || e.data.appId !== S.app.id) return;
+      window.removeEventListener('message', onMsg);
+      const ok = await confirmDialog(`Load data from ${e.data.fileName || 'a saved copy'}?`,
+        'A saved copy of this tool sent its data here. Only the data is loaded; nothing from the other file runs. After loading, use ' + saveWord() + ' and replace the original file with the new copy.', 'Load data');
+      if (!ok) return;
+      if (!(await guardDirty())) return;
+      try { await loadDocument(e.data.data, { fileName: e.data.fileName, source: 'handoff' }); }
+      catch (err) { alertDialog('Could not load data', err.message); }
+    };
+    window.addEventListener('message', onMsg);
+    window.opener.postMessage({ type: 'carryall:ready', appId: S.app.id }, '*');
+  }
+  async function checkForUpdate() {
+    if (!S.app.versionUrl || S.isHome) return;
+    try {
+      const r = await fetch(S.app.versionUrl, { cache: 'no-store' });
+      const j = await r.json();
+      if (j.version && cmpSemver(j.version, S.app.version) > 0) {
+        addBanner('update', 'info', [`A newer version of ${S.app.name} is available (v${j.version}; this copy is v${S.app.version}).`,
+          h('button', { class: 'ca-btn link', onclick: openInHome }, 'Open in the latest version')]);
+        render();
+      }
+    } catch { /* offline or blocked: stay quiet */ }
+  }
+  async function identify() {
+    if (S.app.identity !== 'azure-swa' || S.isLocal) return;
+    try {
+      const r = await fetch('/.auth/me');
+      const j = await r.json();
+      S.user = j.clientPrincipal?.userDetails || null;
+    } catch { /* not signed in */ }
+  }
+
+  // ── Banners, toast, dialogs ────────────────────────────────────────────
+  function addBanner(id, kind, content) { clearBanners(id); S.banners.push({ id, kind, content }); }
+  function clearBanners(id) { S.banners = S.banners.filter(b => b.id !== id); }
+  function sizeAdvisory(bytes) {
+    if (!S.data) return;
+    const rows = Object.values(S.data.tables).reduce((n, t) => n + t.length, 0);
+    bytes = bytes || serialise(S.data).length;
+    clearBanners('size');
+    if (rows > SOFT_ROWS || bytes > SOFT_BYTES) {
+      addBanner('size', 'warn', `This file is getting large (${rows.toLocaleString()} rows, ${fmtBytes(bytes)}). Carryall is designed for up to a few thousand rows; consider archiving old rows or moving to a database.`);
+    }
+  }
+  let toastTimer;
+  function toast(msg) {
+    document.querySelector('.ca-toast')?.remove();
+    const el = h('div', { class: 'ca-toast', role: 'status' }, msg);
+    document.body.append(el);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.remove(), 4000);
+  }
+  let dialogSeq = 0;
+  // buttons: [{label, value, primary, danger, left, onClick}] - onClick returning false keeps dialog open
+  function dialog({ title, body, buttons = [{ label: 'Close', value: null }], wide = false }) {
+    return new Promise(resolve => {
+      let result = null;
+      const headId = 'ca-dlg' + (++dialogSeq);
+      const dlg = h('dialog', { class: 'ca-dialog', 'aria-labelledby': headId, style: wide ? { width: 'min(52rem, calc(100vw - 2rem))' } : null });
+      const form = h('form', { onsubmit: e => { e.preventDefault(); const p = buttons.find(b => b.primary); if (p) click(p); } });
+      async function click(b) {
+        if (b.onClick) { const r = await b.onClick(); if (r === false) return; if (r !== undefined) { result = r; dlg.close(); return; } }
+        result = b.value; dlg.close();
+      }
+      const btns = buttons.map(b => h('button', { type: b.primary ? 'submit' : 'button', class: `ca-btn${b.primary ? ' primary' : ''}${b.danger ? ' danger' : ''}`, onclick: b.primary ? null : () => click(b) }, b.label));
+      const left = buttons.map((b, i) => b.left ? btns[i] : null).filter(Boolean);
+      const right = buttons.map((b, i) => b.left ? null : btns[i]).filter(Boolean);
+      form.append(
+        h('h2', { class: 'ca-dialog-head', id: headId }, title),
+        h('div', { class: 'ca-dialog-body' }, body),
+        h('div', { class: 'ca-dialog-foot' }, left, h('span', { class: 'ca-spacer' }), right));
+      dlg.append(form);
+      dlg.addEventListener('close', () => { dlg.remove(); resolve(result); });
+      document.body.append(dlg);
+      dlg.showModal();
+    });
+  }
+  const alertDialog = (title, msg) => dialog({ title, body: h('p', msg), buttons: [{ label: 'Close', value: true, primary: true }] });
+  const confirmDialog = (title, msg, ok = 'Continue', danger = false) =>
+    dialog({ title, body: h('p', msg), buttons: [{ label: 'Cancel', value: false }, { label: ok, value: true, primary: !danger, danger }] }).then(Boolean);
+  async function guardDirty() {
+    if (!S.dirty) return true;
+    return confirmDialog('Discard your changes?', `The current document has changes that are ${unsavedWord()}. They will be lost (a recovery copy is kept in this browser).`, 'Discard', true);
+  }
+
+  // ── Accessible field wrapper ───────────────────────────────────────────
+  // Ties the label to the control and links help and error text (aria-describedby).
+  let fieldSeq = 0;
+  function makeField(label, control, { required = false, help = null } = {}) {
+    const id = 'ca-f' + (++fieldSeq);
+    const target = control && control.matches && (control.matches('input, select, textarea') ? control : control.querySelector('input, select, textarea'));
+    const err = h('div', { class: 'ca-error', id: id + '-err', 'aria-live': 'polite' });
+    const helpEl = help ? h('div', { class: 'ca-help', id: id + '-help' }, help) : null;
+    const mark = required ? h('span', { 'aria-hidden': 'true' }, ' *') : '';
+    const isCheck = target && target.type === 'checkbox';
+    let lab;
+    if (target && !isCheck) lab = h('label', { for: id }, label, mark);
+    else lab = h('div', { class: 'ca-label', id: id + '-lbl' }, label, mark);
+    if (target) {
+      target.id = id;
+      target.setAttribute('aria-describedby', [helpEl && id + '-help', id + '-err'].filter(Boolean).join(' '));
+      if (required) target.setAttribute('aria-required', 'true');
+      if (isCheck) target.setAttribute('aria-labelledby', id + '-lbl');
+    }
+    const wrap = h('div', { class: 'ca-field' }, lab, control, helpEl, err);
+    return {
+      wrap, target,
+      setError(msg) {
+        err.textContent = msg || '';
+        wrap.classList.toggle('invalid', !!msg);
+        if (target) { if (msg) target.setAttribute('aria-invalid', 'true'); else target.removeAttribute('aria-invalid'); }
+      },
+    };
+  }
+  // Show errors on a set of fields and move focus to the first invalid one.
+  function showErrors(fields, errs) {
+    let first = null;
+    for (const [k, f] of Object.entries(fields)) { f.setError(errs[k]); if (errs[k] && !first) first = f.target; }
+    if (first) first.focus();
+    return !first;
+  }
+  const emptyText = 'Not set';
+
+  // ── Record form ────────────────────────────────────────────────────────
+  function fieldInput(col, value, onChange) {
+    const set = v => onChange(v);
+    switch (col.type) {
+      case 'longtext':
+        return h('textarea', { class: 'ca-textarea', value: value ?? '', oninput: e => set(e.target.value || null) });
+      case 'number': case 'currency': case 'percent':
+        return h('input', { class: 'ca-input', type: 'number', step: col.step ?? 'any', min: col.min, max: col.max, value: value ?? '',
+          oninput: e => set(e.target.value === '' ? null : Number(e.target.value)) });
+      case 'date':
+        return h('input', { class: 'ca-input', type: 'date', value: value ?? '', oninput: e => set(e.target.value || null) });
+      case 'boolean':
+        return h('label', { class: 'ca-check' }, h('input', { type: 'checkbox', checked: !!value, onchange: e => set(e.target.checked) }), col.checkLabel || 'Yes');
+      case 'choice':
+        return h('select', { class: 'ca-select', onchange: e => set(e.target.value || null) },
+          h('option', { value: '' }, emptyText),
+          (col.options || []).map(o => h('option', { value: o, selected: o === value }, o)));
+      case 'ref': {
+        const opts = tableRows(col.table).map(r => [r.id, displayOf(col.table, r)]).sort((a, b) => a[1].localeCompare(b[1]));
+        return h('select', { class: 'ca-select', onchange: e => set(e.target.value || null) },
+          h('option', { value: '' }, emptyText), opts.map(([id, label]) => h('option', { value: id, selected: id === value }, label)));
+      }
+      default:
+        return h('input', { class: 'ca-input', type: 'text', value: value ?? '', maxlength: col.maxLength, oninput: e => set(e.target.value || null) });
+    }
+  }
+  function validateRow(t, row) {
+    const errs = {};
+    const td = t === 'settings' ? S.app.settings : S.app.tables[t];
+    for (const c of Object.values(td.columns)) {
+      const v = row[c.key];
+      if (c.type === 'computed') continue;
+      const name = c.label.toLowerCase();
+      if (c.required && (v == null || v === '')) errs[c.key] = ['choice', 'ref'].includes(c.type) ? `Choose the ${name}` : `Enter the ${name}`;
+      else if (typeof v === 'number' && c.min != null && v < c.min) errs[c.key] = `${c.label} must be ${c.min} or more`;
+      else if (typeof v === 'number' && c.max != null && v > c.max) errs[c.key] = `${c.label} must be ${c.max} or less`;
+      else if (c.unique && v != null && t !== 'settings' && S.data.tables[t].some(r => r.id !== row.id && r[c.key] === v)) errs[c.key] = `${c.label} "${v}" is already used by another ${td.singular}`;
+    }
+    if (typeof td.validate === 'function') Object.assign(errs, td.validate(row, makeApi()) || {});
+    return errs;
+  }
+  function openForm(t, id, preset = {}) {
+    const td = S.app.tables[t];
+    const existing = id ? tableRows(t).find(r => r.id === id) : null;
+    const draft = existing ? clone(existing) : { id: null, ...defaultsFor(td), ...preset };
+    const ro = S.readOnly || td.readOnly;
+    const fields = {};
+    const computedEls = [];
+    const refreshComputed = () => computedEls.forEach(([el, c]) => { el.textContent = formatCell(t, draft, c.key) || emptyText; });
+    const body = h('div', { class: 'ca-form' }, Object.values(td.columns).filter(c => !c.hidden && !c.hideInForm).map(c => {
+      if (c.type === 'computed') {
+        const el = h('div', { class: 'ca-readonly', 'aria-live': 'polite' });
+        computedEls.push([el, c]);
+        return makeField(c.label + ' (calculated)', el).wrap;
+      }
+      const input = ro ? h('div', { class: 'ca-readonly' }, formatCell(t, draft, c.key) || emptyText) : fieldInput(c, draft[c.key], v => { draft[c.key] = v; refreshComputed(); });
+      const f = makeField(c.label, input, { required: c.required && !ro, help: c.help });
+      fields[c.key] = f;
+      return f.wrap;
+    }));
+    refreshComputed();
+    const buttons = [];
+    if (existing && !ro) buttons.push({ label: 'Delete', danger: true, left: true, onClick: async () => {
+      const refs = referencesTo(t, id);
+      if (refs.n) { await alertDialog(`Can't delete this ${td.singular}`, `It is still used (${refs.where.join(', ')}). Change those first.`); return false; }
+      if (!(await confirmDialog(`Delete ${displayOf(t, existing) || 'this ' + td.singular}?`, 'It will be removed from the document. You can undo this until you close the page.', `Delete ${td.singular}`, true))) return false;
+      removeRow(t, id);
+      toast('Deleted. Undo with Ctrl+Z.');
+      return true;
+    } });
+    buttons.push({ label: ro ? 'Close' : 'Cancel', value: false });
+    if (!ro) buttons.push({ label: existing ? 'Save changes' : `Add ${td.singular}`, primary: true, onClick: () => {
+      if (!showErrors(fields, validateRow(t, draft))) return false;
+      if (typeof td.onSave === 'function') td.onSave(draft, existing ? clone(existing) : null, makeApi());
+      const { id: _id, ...rest } = draft;
+      if (existing) updateRow(t, id, rest); else insertRow(t, rest);
+      return true;
+    } });
+    return dialog({ title: `${existing ? (ro ? 'View' : 'Edit') : 'New'} ${td.singular}`, body, buttons });
+  }
+  function defaultsFor(td) {
+    const out = {};
+    for (const c of Object.values(td.columns)) {
+      if (c.type === 'computed' || c.default === undefined) continue;
+      out[c.key] = typeof c.default === 'function' ? c.default(makeApi()) : clone(c.default);
+    }
+    return out;
+  }
+
+  // ── Document properties dialog ─────────────────────────────────────────
+  // Resolves true when the user applies valid details, otherwise false/null.
+  function openProperties({ reason } = {}) {
+    const p = S.data.properties;
+    const ro = S.readOnly;
+    const req = requiredProps();
+    const draft = { projectNumber: p.projectNumber, projectName: p.projectName, createdBy: p.createdBy };
+    const fields = {};
+    const field = (key, label, input, help) => {
+      const f = makeField(label, input, { required: !ro && (req.includes(key) || key === 'user'), help });
+      fields[key] = f;
+      return f.wrap;
+    };
+    const text = key => ro ? h('div', { class: 'ca-readonly' }, draft[key] || emptyText)
+      : h('input', { class: 'ca-input', type: 'text', value: draft[key] ?? '', oninput: e => { draft[key] = e.target.value.trim() || null; } });
+    const userInput = h('input', { class: 'ca-input', type: 'text', value: currentUser() || '', disabled: !!S.user, autocomplete: 'name' });
+    const fmtWhen = iso => (iso ? new Date(iso).toLocaleString(S.app.locale, { dateStyle: 'medium', timeStyle: 'short' }) : '');
+
+    const checkBox = h('div');
+    function drawCheck() {
+      const st = checkState();
+      const status = st.state === 'checked' ? UI.pill(`Checked by ${st.by}, ${fmtWhen(st.at)}`, 'green')
+        : st.state === 'stale' ? UI.pill(`Changed since checked by ${st.by}, ${fmtWhen(st.at)}`, 'amber')
+        : UI.pill('Not checked', 'grey');
+      const name = h('input', { class: 'ca-input', type: 'text', placeholder: "Checker's name", value: currentUser() || '', 'aria-label': "Checker's name", style: { maxWidth: '200px' } });
+      checkBox.replaceChildren(h('div', { class: 'ca-row' }, status,
+        !ro && st.state !== 'checked' && name,
+        !ro && st.state !== 'checked' && h('button', { class: 'ca-btn', type: 'button', onclick: () => {
+          const n = name.value.trim();
+          if (!n) { name.focus(); return; }
+          mutate(d => Object.assign(d.properties, { checkedBy: n, checkedAt: nowISO(), checkedHash: dataHash(d) }));
+          drawCheck(); drawRevs();
+        } }, 'Mark as checked'),
+        !ro && st.state !== 'unchecked' && h('button', { class: 'ca-btn link', type: 'button', onclick: () => {
+          mutate(d => Object.assign(d.properties, { checkedBy: null, checkedAt: null, checkedHash: null }));
+          drawCheck();
+        } }, 'Clear check')),
+        h('div', { class: 'ca-help' }, 'Records who checked the data. Any later change to the data shows it as changed since checked.'));
+    }
+
+    const revBox = h('div');
+    function drawRevs() {
+      const revs = S.data.properties.revisions;
+      revBox.replaceChildren(
+        revs.length ? h('div', { class: 'ca-table-wrap' }, h('table', { class: 'ca-table' },
+          h('thead', h('tr', ['Rev', 'Date', 'Description', 'By', 'Checked'].map(x => h('th', x)))),
+          h('tbody', [...revs].reverse().map(r => h('tr', h('td', r.rev), h('td', formatAs('date', r.date)), h('td', r.description || ''), h('td', r.by || ''), h('td', r.checkedBy || ''))))))
+          : h('p', { class: 'ca-muted', style: { margin: 0 } }, 'No revisions issued yet.'),
+        !ro && h('button', { class: 'ca-btn', type: 'button', style: { marginTop: '0.5rem' }, onclick: addRevision }, 'Issue new revision…'));
+    }
+    async function addRevision() {
+      const last = currentRevision();
+      const st = checkState();
+      const r = { rev: nextRevisionCode(last && last.rev), date: todayISO(), description: '', by: userInput.value.trim() || currentUser() || '', checkedBy: st.state === 'checked' ? st.by : '' };
+      const inp = (k, type = 'text') => h('input', { class: 'ca-input', type, value: r[k], oninput: e => { r[k] = e.target.value; } });
+      const revField = makeField('Revision', inp('rev'), { required: true, help: 'For example P01, P02 or A, B.' });
+      const ok = await dialog({ title: 'Issue new revision', body: h('div', { class: 'ca-form' },
+        h('div', { class: 'ca-grid2' }, revField.wrap, makeField('Date', inp('date', 'date')).wrap),
+        makeField('Description', h('textarea', { class: 'ca-textarea', style: { minHeight: '4rem' }, oninput: e => { r.description = e.target.value; } })).wrap,
+        h('div', { class: 'ca-grid2' }, makeField('By', inp('by')).wrap, makeField('Checked by', inp('checkedBy')).wrap)),
+        buttons: [{ label: 'Cancel', value: false }, { label: 'Add revision', value: true, primary: true, onClick: () => {
+          const code = r.rev.trim();
+          const msg = !code ? 'Enter a revision code' : S.data.properties.revisions.some(x => x.rev === code) ? `Revision ${code} already exists. Enter a new code.` : '';
+          revField.setError(msg);
+          if (msg) { revField.target.focus(); return false; }
+        } }] });
+      if (!ok) return;
+      const clean = Object.fromEntries(Object.entries(r).map(([k, v]) => [k, String(v).trim() || null]));
+      mutate(d => d.properties.revisions.push(clean));
+      drawRevs();
+    }
+    drawCheck(); drawRevs();
+
+    const body = h('div', { class: 'ca-form' },
+      reason && h('div', { class: 'ca-banner warn', style: { borderRadius: '6px', border: '1px solid var(--ca-warn-border)' } }, reason),
+      h('div', { class: 'ca-grid2' },
+        field('projectNumber', 'Project number', text('projectNumber')),
+        field('projectName', 'Project name', text('projectName'))),
+      h('div', { class: 'ca-grid2' },
+        field('user', 'Your name', ro ? h('div', { class: 'ca-readonly' }, currentUser() || emptyText) : userInput,
+          S.user ? 'From your sign-in.' : `Remembered in this browser; recorded as "updated by" each time you ${saveWord().toLowerCase()}.`),
+        field('createdBy', 'Created by', text('createdBy'))),
+      h('p', { class: 'ca-muted', style: { margin: 0, fontSize: '13px' } },
+        p.updatedBy || S.data.meta.savedAt ? `Last updated by ${p.updatedBy || 'unknown'}${S.data.meta.savedAt ? ', ' + fmtWhen(S.data.meta.savedAt) : ''} (save ${S.data.meta.revision}).` : 'Not saved yet.'),
+      h('h3', { class: 'ca-subhead' }, 'Check'), checkBox,
+      h('h3', { class: 'ca-subhead' }, 'Revisions'), revBox);
+
+    return dialog({ title: 'Document properties', body, wide: true, buttons: ro ? [{ label: 'Close', value: false, primary: true }] : [
+      { label: 'Cancel', value: false },
+      { label: 'Apply', value: true, primary: true, onClick: () => {
+        const errs = {};
+        const names = { projectNumber: 'project number', projectName: 'project name', createdBy: 'name of who created it' };
+        for (const k of req) if (!draft[k]) errs[k] = `Enter the ${names[k] || k}`;
+        const user = userInput.value.trim();
+        if (!user) errs.user = 'Enter your name so downloads record who updated the document';
+        if (!showErrors(fields, errs)) return false;
+        if (!S.user) setCurrentUser(user);
+        if (Object.keys(draft).some(k => draft[k] !== S.data.properties[k])) mutate(d => Object.assign(d.properties, draft));
+        else render();
+      } }] });
+  }
+
+  // ── Built-in UI helpers (also exposed as Carryall.ui) ──────────────────
+  const UI = {
+    // Horizontal bar chart built from HTML, so text stays full size in any width and prints.
+    // items: [{label, value}]
+    barChart(items, { format = v => String(v), title } = {}) {
+      const max = Math.max(0, ...items.map(i => i.value || 0)) || 1;
+      if (!items.length) return h('div', { class: 'ca-bars-empty ca-muted' }, 'No data');
+      return h('div', { class: 'ca-bars', role: 'img', 'aria-label': title || 'Bar chart' }, items.map(it => {
+        const label = String(it.label ?? '');
+        const pct = Math.max(0, Math.min(100, 100 * (it.value || 0) / max));
+        return [
+          h('span', { class: 'ca-bar-label', title: label }, label),
+          h('span', { class: 'ca-bar-track' }, h('span', { class: 'ca-bar-fill', style: { width: pct + '%' } })),
+          h('span', { class: 'ca-bar-value' }, format(it.value)),
+        ];
+      }));
+    },
+    // Chart series colours in style-guide order, as CSS custom property references.
+    palette: ['red', 'purple', 'blue-dark', 'teal', 'pink', 'green', 'blue-bright', 'sage', 'orange', 'slate'].map(c => `var(--ca-${c})`),
+    pill(text, color) { return h('span', { class: `ca-pill${color ? ' ' + color : ''}` }, text); },
+    kpi(label, value) { return h('div', { class: 'ca-kpi' }, h('div', { class: 'ca-kpi-label' }, label), h('div', { class: 'ca-kpi-value' }, value)); },
+    card(title, ...kids) { return h('div', { class: 'ca-card' }, title && h('h2', title), kids); },
+    dialog, alert: alertDialog, confirm: confirmDialog,
+  };
+  const Util = { uid, clone, todayISO, parseDate, daysBetween, yearsBetween, addDays, addMonths, esc, parseCsv, cmpSemver };
+
+  // ── Views ──────────────────────────────────────────────────────────────
+  const VIEWS = {
+    table: renderTableView,
+    summary: renderSummary,
+    kpi: renderKpis,
+    dashboard: renderDashboard,
+    settings: renderSettings,
+    custom: (el, v, api) => v.render(el, api),
+  };
+  function renderView(el, view, key) {
+    const fn = VIEWS[view.type] || S.viewTypes[view.type];
+    if (!fn) { el.append(h('div', { class: 'ca-card' }, `Unknown view type "${view.type}".`)); return; }
+    try { fn(el, view, makeApi(), key); }
+    catch (e) { console.error(e); el.append(h('div', { class: 'ca-card' }, h('strong', 'This view failed to render: '), e.message)); }
+  }
+  function cellNode(t, row, col) {
+    const text = formatCell(t, row, col.key);
+    if (col.type === 'choice' && col.colors && text) return UI.pill(text, col.colors[row[col.key]]);
+    if (col.type === 'computed' && col.colors) {
+      const v = rawValue(t, row, col.key);
+      const color = typeof col.colors === 'function' ? col.colors(v, row) : col.colors[v];
+      return text ? UI.pill(text, color) : '';
+    }
+    if (col.type === 'boolean') return row[col.key] ? 'Yes' : 'No';
+    if (col.mono) return h('span', { class: 'ca-mono' }, text);
+    if (col.type === 'longtext' && text.length > 80) return text.slice(0, 79) + '…';
+    return text;
+  }
+  function renderTableView(el, view, api, key) {
+    const t = view.table, td = S.app.tables[t];
+    if (!td) throw new Error(`Table "${t}" is not defined`);
+    const vs = S.viewState[key] = S.viewState[key] || { q: '', sort: view.sort ? { ...view.sort } : null, filters: {}, limit: PAGE };
+    const cols = (view.columns || Object.keys(td.columns).filter(k => !td.columns[k].hidden)).map(k => {
+      if (!td.columns[k]) throw new Error(`Column "${k}" is not defined on ${t}`);
+      return td.columns[k];
+    });
+    const count = h('span', { class: 'ca-muted' });
+    const tbody = h('tbody'), tfoot = h('tfoot');
+    const filters = (view.filters || []).map(fk => {
+      const c = td.columns[fk];
+      const opts = c.type === 'choice' ? c.options.map(o => [o, o])
+        : c.type === 'ref' ? tableRows(c.table).map(r => [r.id, displayOf(c.table, r)])
+        : c.type === 'boolean' ? [['true', 'Yes'], ['false', 'No']]
+        : [...new Set(tableRows(t).map(r => rawValue(t, r, fk)).filter(v => v != null && v !== ''))].sort().map(v => [String(v), String(v)]);
+      return h('select', { class: 'ca-select', 'aria-label': `Filter by ${c.label}`, onchange: e => { vs.filters[fk] = e.target.value; vs.limit = PAGE; refresh(); } },
+        h('option', { value: '' }, `Any ${c.label.toLowerCase()}`), opts.map(([v, l]) => h('option', { value: v, selected: vs.filters[fk] === v }, l)));
+    });
+    const ro = S.readOnly || td.readOnly || view.readOnly;
+    el.append(h('div', { class: 'ca-tv-bar' },
+      view.search !== false && h('input', { class: 'ca-input', type: 'search', placeholder: 'Search…', value: vs.q, 'aria-label': 'Search', oninput: e => { vs.q = e.target.value; vs.limit = PAGE; refresh(); } }),
+      filters, h('span', { class: 'ca-spacer' }), count,
+      !ro && view.add !== false && h('button', { class: 'ca-btn primary', onclick: () => openForm(t, null, view.preset) }, `+ Add ${td.singular}`)));
+    const thead = h('thead', h('tr', cols.map(c => {
+      const active = vs.sort && vs.sort.key === c.key;
+      return h('th', { class: `sortable${isNumericCol(c) ? ' num' : ''}`, scope: 'col', 'aria-sort': active ? (vs.sort.dir === 'desc' ? 'descending' : 'ascending') : null },
+        h('button', { class: 'ca-sort-btn', type: 'button', dataset: { caFocus: `sort.${key}.${c.key}` },
+          onclick: () => { vs.sort = active && vs.sort.dir === 'asc' ? { key: c.key, dir: 'desc' } : active ? null : { key: c.key, dir: 'asc' }; render(); } },
+          c.label, h('span', { class: 'ca-sort', 'aria-hidden': 'true' }, active ? (vs.sort.dir === 'asc' ? '▲' : '▼') : '')));
+    })));
+    el.append(h('div', { class: 'ca-table-wrap' }, h('table', { class: 'ca-table' }, thead, tbody, tfoot)));
+    const more = h('div', { style: { textAlign: 'center', marginTop: '10px' } });
+    el.append(more);
+
+    function refresh() {
+      const all = tableRows(t);
+      let rows = all.filter(r => (!view.where || view.where(r, api)) && Object.entries(vs.filters).every(([fk, fv]) => !fv || String(rawValue(t, r, fk)) === fv));
+      if (vs.q) {
+        const q = vs.q.toLowerCase();
+        rows = rows.filter(r => cols.some(c => formatCell(t, r, c.key).toLowerCase().includes(q)));
+      }
+      if (vs.sort) {
+        const { key: sk, dir } = vs.sort, m = dir === 'desc' ? -1 : 1;
+        rows = rows.map(r => [sortKey(t, r, sk), r]).sort(([a], [b]) => (a == null || a === '') ? 1 : (b == null || b === '') ? -1 : (a < b ? -m : a > b ? m : 0)).map(x => x[1]);
+      }
+      tbody.replaceChildren(...(rows.length ? rows.slice(0, vs.limit).map(r => h('tr', { class: 'clickable', tabindex: 0, onclick: () => openForm(t, r.id), onkeydown: e => { if (e.key === 'Enter') openForm(t, r.id); } },
+        cols.map(c => h('td', { class: `${isNumericCol(c) ? 'num' : ''}${c.type === 'computed' ? ' ca-computed' : ''}${c.type === 'longtext' ? ' ca-long' : ''}` }, cellNode(t, r, c)))))
+        : [h('tr', h('td', { class: 'ca-empty', colspan: cols.length }, all.length ? 'No matching rows' : `No ${td.label.toLowerCase()} yet`))]));
+      if (view.totals?.length && rows.length) {
+        tfoot.replaceChildren(h('tr', cols.map((c, i) => {
+          if (!view.totals.includes(c.key)) return h('td', i === 0 ? 'Total' : '');
+          const sum = rows.reduce((s, r) => s + (Number(rawValue(t, r, c.key)) || 0), 0);
+          return h('td', { class: 'num' }, formatAs(c.type === 'computed' ? c.format || 'number' : c.type, sum, c));
+        })));
+      } else tfoot.replaceChildren();
+      count.textContent = rows.length === all.length ? `${all.length} ${all.length === 1 ? td.singular : td.label.toLowerCase()}` : `${rows.length} of ${all.length}`;
+      more.replaceChildren(rows.length > vs.limit ? h('button', { class: 'ca-btn', onclick: () => { vs.limit += PAGE; refresh(); } }, `Show more (${rows.length - vs.limit} remaining)`) : '');
+    }
+    refresh();
+  }
+  function groupLabel(t, row, col, bucket) {
+    if (col.type === 'date' && bucket) {
+      const v = row[col.key];
+      if (!v) return ['', '(no date)'];
+      if (bucket === 'year') return [v.slice(0, 4), v.slice(0, 4)];
+      const d = parseDate(v);
+      return [v.slice(0, 7), d.toLocaleDateString(S.app.locale, { month: 'long', year: 'numeric' })];
+    }
+    if (col.type === 'ref') return [row[col.key] || '', formatCell(t, row, col.key) || '(none)'];
+    const v = rawValue(t, row, col.key);
+    return [v == null ? '' : String(v), formatCell(t, row, col.key) || '(none)'];
+  }
+  function metricValue(t, rows, m) {
+    if (m.op === 'count' || !m.op) return rows.length;
+    const vals = rows.map(r => Number(rawValue(t, r, m.column))).filter(v => isFinite(v));
+    if (m.op === 'sum') return vals.reduce((a, b) => a + b, 0);
+    if (!vals.length) return null;
+    if (m.op === 'avg') return vals.reduce((a, b) => a + b, 0) / vals.length;
+    if (m.op === 'min') return Math.min(...vals);
+    if (m.op === 'max') return Math.max(...vals);
+    throw new Error(`Unknown metric op "${m.op}"`);
+  }
+  function metricFormat(t, m) {
+    if (m.format) return m.format;
+    if (m.op === 'count' || !m.op) return 'integer';
+    const c = colDef(t, m.column);
+    return c?.type === 'computed' ? c.format || 'number' : c?.type || 'number';
+  }
+  function renderSummary(el, view, api) {
+    const t = view.table, td = S.app.tables[t];
+    const col = td.columns[view.groupBy];
+    if (!col) throw new Error(`groupBy column "${view.groupBy}" is not defined on ${t}`);
+    const metrics = view.metrics || [{ label: 'Count', op: 'count' }];
+    const rows = tableRows(t).filter(r => !view.where || view.where(r, api));
+    const groups = new Map();
+    for (const r of rows) {
+      const [k, label] = groupLabel(t, r, col, view.bucket);
+      if (!groups.has(k)) groups.set(k, { key: k, label, rows: [] });
+      groups.get(k).rows.push(r);
+    }
+    let list = [...groups.values()].map(g => ({ ...g, values: metrics.map(m => metricValue(t, g.rows, m)) }));
+    if (col.type === 'choice' && !view.sortBy) list.sort((a, b) => col.options.indexOf(a.key) - col.options.indexOf(b.key));
+    else if (col.type === 'date' || view.sortBy === 'label') list.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+    else list.sort((a, b) => (b.values[0] ?? 0) - (a.values[0] ?? 0));
+    const fmts = metrics.map(m => metricFormat(t, m));
+    const card = h('div', { class: 'ca-card' }, view.title && h('h2', view.title));
+    if (view.chart !== false) {
+      const mi = typeof view.chart === 'number' ? view.chart : 0;
+      card.append(UI.barChart(list.map(g => ({ label: g.label, value: g.values[mi] || 0 })), { format: v => formatAs(fmts[mi], v), title: view.title }));
+    }
+    if (view.showTable !== false) {
+      const totals = metrics.map(m => metricValue(t, rows, m));
+      card.append(h('div', { class: 'ca-table-wrap', style: { marginTop: '0.75rem' } }, h('table', { class: 'ca-table' },
+        h('thead', h('tr', h('th', col.label), metrics.map(m => h('th', { class: 'num' }, m.label || m.op)))),
+        h('tbody', list.map(g => h('tr', h('td', g.label), g.values.map((v, i) => h('td', { class: 'num' }, formatAs(fmts[i], v)))))),
+        h('tfoot', h('tr', h('td', 'Total'), totals.map((v, i) => h('td', { class: 'num' }, metrics[i].op === 'sum' || metrics[i].op === 'count' || !metrics[i].op ? formatAs(fmts[i], v) : '')))))));
+    }
+    el.append(card);
+  }
+  function renderKpis(el, view, api) {
+    el.append(h('div', { class: 'ca-kpis' }, (view.items || []).map(it => {
+      let v;
+      try { v = it.value(api); } catch (e) { console.warn(e); v = NaN; }
+      return UI.kpi(it.label, typeof v === 'number' && isNaN(v) ? '#ERR' : formatAs(it.format || 'number', v, it));
+    })));
+  }
+  // KPI rows and blocks marked wide span the full width; others flow into a card grid.
+  function renderDashboard(el, view, api, key) {
+    let grid = null;
+    (view.blocks || []).forEach((b, i) => {
+      const box = h('div');
+      renderView(box, b, `${key}.${i}`);
+      if (b.type === 'kpi' || b.wide) { grid = null; el.append(box); return; }
+      if (!grid) { grid = h('div', { class: 'ca-grid' }); el.append(grid); }
+      grid.append(box);
+    });
+  }
+  function renderSettings(el, view) {
+    const sd = S.app.settings;
+    if (!sd) throw new Error('No "settings" defined on the app');
+    const keys = view.fields || Object.keys(sd.columns);
+    const pending = {};
+    const commit = () => setTimeout(() => {
+      const patch = Object.fromEntries(Object.entries(pending).filter(([k, v]) => S.data.settings[k] !== v));
+      for (const k of Object.keys(pending)) delete pending[k];
+      if (Object.keys(patch).length) mutate(d => Object.assign(d.settings, patch));
+    });
+    el.append(h('div', { class: 'ca-card', style: { maxWidth: '36rem' } }, view.title && h('h2', view.title), view.intro && h('p', { class: 'ca-muted' }, view.intro),
+      h('div', { class: 'ca-form', onchange: commit }, keys.map(k => {
+        const c = sd.columns[k];
+        if (c.type === 'computed') return makeField(c.label + ' (calculated)', h('div', { class: 'ca-readonly' }, formatCell('settings', S.data.settings, k))).wrap;
+        const input = S.readOnly ? h('div', { class: 'ca-readonly' }, formatCell('settings', S.data.settings, k) || emptyText)
+          : fieldInput(c, S.data.settings[k], v => { pending[k] = v; });
+        const focusable = input.matches('input, select, textarea') ? input : input.querySelector('input');
+        if (focusable) focusable.dataset.caFocus = 'settings.' + k;
+        return makeField(c.label, input, { help: c.help }).wrap;
+      }))));
+  }
+
+  // ── Page rendering ─────────────────────────────────────────────────────
+  function render() {
+    const root = S.root;
+    if (!root) return;
+    const focusKey = document.activeElement?.dataset?.caFocus;
+    const panel = S.data ? h('div', S.app.views.length > 1 ? { role: 'tabpanel', id: 'ca-panel', 'aria-labelledby': `ca-tab-${S.tab}` } : null, renderCurrentView()) : renderLanding();
+    root.replaceChildren(
+      h('a', { class: 'ca-skip', href: '#ca-main', onclick: e => { e.preventDefault(); document.getElementById('ca-main')?.focus(); } }, 'Skip to content'),
+      renderHeader(), renderBanners(), S.data ? renderTabs() : '',
+      h('main', { class: 'ca-main', id: 'ca-main', tabindex: '-1' }, panel), renderFooter());
+    if (focusKey) root.querySelector(`[data-ca-focus="${focusKey}"]`)?.focus();
+    document.title = `${S.dirty ? '• ' : ''}${S.fileName ? S.fileName + ' – ' : ''}${S.app.name}`;
+  }
+  function renderHeader() {
+    const has = !!S.data;
+    const btn = (label, onclick, opts = {}) => h('button', { class: `ca-btn${opts.primary ? ' primary' : ''}`, onclick, disabled: opts.disabled, title: opts.title }, label);
+    const menu = h('details', { class: 'ca-menu' }, h('summary', { class: 'ca-btn' }, 'More', h('span', { 'aria-hidden': 'true' }, ' ▾')), h('div', { class: 'ca-menu-list' },
+      has && Object.entries(S.app.tables).map(([k, td]) => h('button', { onclick: () => exportCsv(k) }, `Export ${td.label} (CSV)`)),
+      has && h('button', { onclick: exportJson }, 'Export data (JSON)'),
+      has && !S.readOnly && h('button', { onclick: () => h('input', { type: 'file', accept: '.csv', onchange: e => e.target.files[0]?.text().then(tx => importCsv(tx, e.target.files[0].name)) }).click() }, 'Import CSV…'),
+      has && propsOn() && h('button', { onclick: () => openProperties() }, 'Document properties…'),
+      has && h('button', { onclick: () => window.print() }, 'Print'),
+      S.app.home && !S.isHome && h('button', { onclick: openInHome }, S.data ? 'Open data in latest tool' : 'Go to latest tool'),
+      h('button', { onclick: startNew }, 'Start new document'),
+      h('button', { onclick: showAbout }, 'About this file')));
+    // Row 1: tool name + actions. Row 2 (meta line): document properties and file state.
+    return h('header', { class: 'ca-header' },
+      h('div', { class: 'ca-header-main' },
+        h('div', { class: 'ca-titles' },
+          h('h1', { class: 'ca-title' }, S.app.name),
+          has && h('div', { class: 'ca-meta' }, propsOn() && renderDocLine(), renderFileState())),
+        h('div', { class: 'ca-toolbar', role: 'toolbar', 'aria-label': 'File actions' },
+          btn('Open…', pickAndOpen, { title: 'Open a saved Carryall file, JSON or CSV' }),
+          has && btn(S.app.saveInPlace ? 'Save' : 'Download', () => save(), { primary: true, disabled: S.readOnly,
+            title: !S.app.saveInPlace ? 'Download a copy of this file with your data (Ctrl+S)' : S.handle ? `Save to ${S.handle.name} (Ctrl+S)` : 'Choose where to save (Ctrl+S)' }),
+          has && S.app.saveInPlace && btn('Save as…', () => save({ as: true }), { disabled: S.readOnly }),
+          has && h('div', { class: 'ca-btn-group', role: 'group', 'aria-label': 'History' },
+            btn('Undo', undo, { disabled: !S.undo.length || S.readOnly, title: 'Undo the last change (Ctrl+Z)' }),
+            btn('Redo', redo, { disabled: !S.redo.length || S.readOnly, title: 'Redo (Ctrl+Y)' })),
+          menu)));
+  }
+  function renderFileState() {
+    return h('span', { class: 'ca-file' },
+      h('span', { class: 'ca-file-name', title: S.fileName || '' }, S.fileName || 'Untitled document'),
+      S.readOnly ? UI.pill('Read-only', 'amber')
+        : S.dirty ? h('span', { class: 'ca-state' }, h('span', { class: 'ca-dirty', 'aria-hidden': 'true' }), `Changes ${unsavedWord()}`)
+        : S.data.meta.savedAt ? h('span', { class: 'ca-state' }, 'No changes') : null);
+  }
+  function renderDocLine() {
+    const p = S.data.properties;
+    const rev = currentRevision();
+    const st = checkState();
+    const parts = [p.projectNumber, p.projectName, rev && `Rev ${rev.rev}`].filter(Boolean);
+    return h('button', { class: 'ca-docline', type: 'button', onclick: () => openProperties(), title: 'Edit document properties' },
+      parts.length ? h('span', parts.join(' · ')) : h('span', { class: 'ca-docline-empty' }, 'Add project details'),
+      st.state === 'checked' && UI.pill(`Checked by ${st.by}`, 'green'),
+      st.state === 'stale' && UI.pill('Changed since check', 'amber'));
+  }
+  function fmtDateTime(iso) {
+    return iso ? new Date(iso).toLocaleString(S.app.locale, { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  }
+  function renderBanners() {
+    const wrap = c => (Array.isArray(c) ? groupText(c) : [h('span', c)]);
+    const list = [...S.banners];
+    if (S.app.home && !S.isHome && !S.homeBannerDismissed) {
+      list.unshift({ id: 'home', kind: 'info', content: [
+        `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`,
+        h('span', { class: 'ca-spacer' }),
+        h('button', { class: 'ca-btn primary', onclick: openInHome }, S.data ? 'Open data in latest tool' : 'Go to latest tool'),
+        h('button', { class: 'ca-btn', onclick: () => { S.homeBannerDismissed = true; render(); } }, 'Dismiss')] });
+    }
+    return h('div', { class: 'ca-banners' }, list.map(b => h('div', { class: `ca-banner ${b.kind}`, role: 'status' }, wrap(b.content))));
+  }
+  // Merge leading text/strong parts into one span so they flow as a sentence.
+  function groupText(parts) {
+    const out = []; let span = null;
+    for (const p of parts) {
+      const inline = typeof p === 'string' || (p instanceof Node && p.tagName === 'STRONG');
+      if (inline) { if (!span) out.push(span = h('span')); span.append(p); }
+      else { span = null; out.push(p); }
+    }
+    return out;
+  }
+  function renderTabs() {
+    if (S.app.views.length < 2) return '';
+    const n = S.app.views.length;
+    const go = i => { S.tab = (i + n) % n; render(); document.getElementById(`ca-tab-${S.tab}`)?.focus(); };
+    return h('nav', { class: 'ca-tabs', role: 'tablist', 'aria-label': 'Views' }, S.app.views.map((v, i) =>
+      h('button', { class: 'ca-tab', role: 'tab', id: `ca-tab-${i}`, 'aria-selected': String(i === S.tab), 'aria-controls': 'ca-panel',
+        tabindex: i === S.tab ? '0' : '-1', onclick: () => { S.tab = i; render(); },
+        onkeydown: e => {
+          if (e.key === 'ArrowRight') { e.preventDefault(); go(i + 1); }
+          else if (e.key === 'ArrowLeft') { e.preventDefault(); go(i - 1); }
+          else if (e.key === 'Home') { e.preventDefault(); go(0); }
+          else if (e.key === 'End') { e.preventDefault(); go(n - 1); }
+        } }, v.title)));
+  }
+  function renderCurrentView() {
+    const el = h('div');
+    renderView(el, S.app.views[S.tab], String(S.tab));
+    return el;
+  }
+  function renderLanding() {
+    const rec = h('div');
+    IDB.all().then(list => {
+      list = list.filter(r => r.appId === S.app.id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
+      if (!list.length) return;
+      rec.append(h('div', { class: 'ca-card', style: { textAlign: 'left' } }, h('h2', 'Recover work that was not downloaded'),
+        list.map(r => h('div', { style: { display: 'flex', gap: '0.5rem', alignItems: 'center', margin: '0.375rem 0' } },
+          h('span', { style: { flex: 1 } }, `${r.fileName || 'Untitled'} `, h('span', { class: 'ca-muted' }, fmtDateTime(r.at))),
+          h('button', { class: 'ca-btn', onclick: () => restoreRecovery(r) }, 'Restore'),
+          h('button', { class: 'ca-btn', onclick: () => IDB.del(r.key).then(render) }, 'Discard')))));
+    }).catch(() => {});
+    return h('div', { class: 'ca-landing' },
+      h('h2', S.app.name),
+      S.app.description && h('p', { class: 'ca-muted' }, S.app.description),
+      h('div', { class: 'ca-actions' },
+        h('button', { class: 'ca-btn primary', onclick: pickAndOpen }, 'Open a saved file…'),
+        h('button', { class: 'ca-btn', onclick: startNew }, 'Start new')),
+      h('div', { class: 'ca-drop-hint' }, 'Or drag a saved copy (.html), a JSON export or a CSV onto this page.'),
+      h('p', { class: 'ca-muted', style: { fontSize: '0.875rem', marginTop: '1rem' } }, 'Everything runs in your browser. Nothing is uploaded: your data leaves this page only as a file you download.'),
+      rec);
+  }
+  function renderFooter() {
+    const m = S.data?.meta;
+    const who = S.data?.properties?.updatedBy;
+    const docInfo = !m ? 'No document open'
+      : m.savedAt ? `Last downloaded ${fmtDateTime(m.savedAt)}${who ? ' by ' + who : ''} · save ${m.revision}`
+      : 'Not downloaded yet';
+    return h('footer', { class: 'ca-footer' },
+      h('div', { class: 'ca-footer-inner' },
+        h('span', docInfo),
+        h('span', { class: 'ca-footer-end' },
+          h('span', `${S.app.name} ${S.app.version} · schema ${S.app.schemaVersion} · Carryall ${CORE_VERSION}`),
+          h('button', { class: 'ca-btn link', onclick: showAbout }, 'About this file'))));
+  }
+  function showAbout() {
+    const m = S.data?.meta || {};
+    const rows = S.data ? Object.entries(S.app.tables).map(([k, td]) => `${td.label}: ${S.data.tables[k].length}`).join(', ') : '-';
+    const bytes = S.data ? serialise(S.data).length : 0;
+    const kv = [['Tool', `${S.app.name} (${S.app.id})`], ['Tool version', S.app.version], ['Schema version', S.app.schemaVersion], ['Carryall core', CORE_VERSION],
+      ['Home', S.app.home || '(none)'], ['Running from', S.isHome ? 'home site' : S.isLocal ? 'local file' : location.origin],
+      ['File', S.fileName || '-'], ['Document id', m.docId || '-'], ['Save count', m.revision ?? '-'], ['Created', m.created || '-'],
+      ['Last saved', m.savedAt || '-'], ['Updated by', S.data?.properties.updatedBy || '-'], ['Rows', rows], ['Data size', fmtBytes(bytes)],
+      ['Migrations', (m.migrations || []).map(x => `${x.from}→${x.to} (${x.at.slice(0, 10)})`).join(', ') || '-']];
+    dialog({ title: 'About this file', wide: true,
+      body: h('div', h('dl', { class: 'ca-kv' }, kv.map(([k, v]) => [h('dt', k), h('dd', String(v))])),
+        S.app.description && h('p', { class: 'ca-muted' }, S.app.description)),
+      buttons: [{ label: 'Run self-test', left: true, onClick: () => { selfTest(true); return false; } }, { label: 'Close', value: null, primary: true }] });
+  }
+
+  // ── Self-test (for app authors and LLMs) ───────────────────────────────
+  function selfTest(show = false) {
+    const res = [];
+    const ok = (name, pass, detail = '') => res.push({ pass: !!pass, name, detail });
+    const app = S.app;
+    const temp = !S.data;
+    if (temp) S.data = newDocument();
+    try {
+      for (const [tk, td] of Object.entries(app.tables)) {
+        for (const c of Object.values(td.columns)) {
+          const where = `${tk}.${c.key}`;
+          ok(`${where} type`, COLUMN_TYPES.includes(c.type), c.type);
+          if (c.type === 'choice') ok(`${where} options`, Array.isArray(c.options) && c.options.length);
+          if (c.type === 'ref') ok(`${where} ref target`, !!app.tables[c.table], c.table);
+          if (c.type === 'computed') ok(`${where} fn`, typeof c.fn === 'function');
+        }
+        ok(`${tk} display column`, typeof td.display === 'function' || !!td.columns[td.display], String(td.display));
+      }
+      for (let v = 2; v <= app.schemaVersion; v++) ok(`migration to v${v}`, typeof app.migrations[v] === 'function');
+      const extra = Object.keys(app.migrations).map(Number).filter(v => v < 2 || v > app.schemaVersion);
+      ok('no stray migrations', !extra.length, extra.join(','));
+      const probe = h('div');
+      app.views.forEach((v, i) => {
+        const errs = [];
+        const orig = console.error; console.error = (...a) => errs.push(a.join(' '));
+        try { renderView(probe, v, `selftest.${i}`); } finally { console.error = orig; }
+        ok(`view "${v.title}" renders`, !errs.length && !probe.textContent.includes('failed to render') && !probe.textContent.includes('Unknown view type'), errs.join('; '));
+        probe.textContent = '';
+      });
+      const saved = S.data;
+      for (const fx of app.fixtures || []) {
+        try {
+          let d = clone(fx.doc);
+          if ((d.app?.schemaVersion || 1) < app.schemaVersion) d = migrate(d);
+          normalise(d);
+          S.data = d;
+          let bad = 0;
+          for (const [tk, td] of Object.entries(app.tables)) for (const r of d.tables[tk]) for (const c of Object.values(td.columns)) {
+            if (c.type === 'computed') { const v = rawValue(tk, r, c.key); if (typeof v === 'number' && isNaN(v)) bad++; }
+            if (c.type === 'ref' && r[c.key] && !d.tables[c.table].some(x => x.id === r[c.key])) bad++;
+          }
+          ok(`fixture "${fx.name}" migrates cleanly`, !bad, bad ? `${bad} bad values` : '');
+          if (fx.expect) ok(`fixture "${fx.name}" expectations`, fx.expect(d, makeApi()) !== false);
+        } catch (e) { ok(`fixture "${fx.name}"`, false, e.message); }
+        finally { S.data = saved; }
+      }
+      if (S.data && !temp) {
+        const html = buildFile(prepareForSave());
+        const back = extractFromHtml(html);
+        ok('export round-trip preserves data', JSON.stringify(back.tables) === JSON.stringify(S.data.tables) && JSON.stringify(back.settings) === JSON.stringify(S.data.settings));
+        ok('export round-trip preserves document properties', JSON.stringify(back.properties.revisions) === JSON.stringify(S.data.properties.revisions) && back.properties.projectNumber === S.data.properties.projectNumber);
+        ok('export contains core + app scripts', /id="ca-core"/.test(html) && /id="ca-app"/.test(html));
+      }
+    } catch (e) { ok('self-test crashed', false, e.stack || e.message); }
+    finally { if (temp) S.data = null; }
+    const failed = res.filter(r => !r.pass);
+    console[failed.length ? 'warn' : 'log'](`[carryall] self-test: ${res.length - failed.length}/${res.length} passed`, failed);
+    if (show) {
+      dialog({ title: `Self-test: ${res.length - failed.length}/${res.length} passed`, wide: true,
+        body: h('table', { class: 'ca-table' }, h('tbody', res.map(r => h('tr', h('td', r.pass ? 'Pass' : UI.pill('Fail', 'red')), h('td', r.name), h('td', { class: 'ca-muted' }, r.detail))))) });
+    }
+    return { passed: res.length - failed.length, failed: failed.length, results: res };
+  }
+
+  // ── Boot ───────────────────────────────────────────────────────────────
+  function bindGlobal() {
+    window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+    document.addEventListener('keydown', e => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || !S.data) return;
+      const k = e.key.toLowerCase();
+      if (k === 's') { e.preventDefault(); save({ as: e.shiftKey }); return; }
+      if (document.querySelector('dialog[open]') || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+    });
+    document.addEventListener('click', e => {
+      document.querySelectorAll('details.ca-menu[open]').forEach(d => { if (!d.contains(e.target) || e.target.closest('.ca-menu-list button')) d.open = false; });
+    });
+    let depth = 0;
+    const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+    document.addEventListener('dragenter', e => { if (hasFiles(e)) { depth++; document.body.classList.add('ca-dragging'); } });
+    document.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; document.body.classList.remove('ca-dragging'); } });
+    document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+    document.addEventListener('drop', async e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); depth = 0; document.body.classList.remove('ca-dragging');
+      const item = e.dataTransfer.items?.[0];
+      const handleP = S.app.saveInPlace && item?.getAsFileSystemHandle ? item.getAsFileSystemHandle().catch(() => null) : null;
+      const file = e.dataTransfer.files[0];
+      const handle = handleP ? await handleP : null;
+      if (file) openFile(file, handle && handle.kind === 'file' ? handle : null);
+    });
+  }
+  async function boot() {
+    S.root = document.getElementById('ca-root');
+    if (!S.app) { S.root.textContent = 'Carryall: no app defined. Add Carryall.app({...}) in <script id="ca-app">.'; return; }
+    captureShell();
+    S.isHome = computeIsHome();
+    const api = makeApi();
+    for (const p of S.plugins) { try { p.setup && p.setup(api); } catch (e) { console.error(`[carryall] plugin ${p.name} failed`, e); } }
+    bindGlobal();
+    const raw = document.getElementById('ca-data')?.textContent.trim();
+    if (raw && raw !== 'null') {
+      try {
+        const last = decodeURIComponent(location.pathname.split('/').pop());
+        const name = /.html?$/i.test(last) ? last : null;
+        await loadDocument(JSON.parse(raw), { fileName: name, source: 'embedded' });
+      } catch (e) {
+        console.error(e);
+        addBanner('load', 'warn', `The data in this file could not be loaded: ${e.message}`);
+        render();
+      }
+    } else render();
+    listenForHandoff();
+    identify();
+    checkForUpdate();
+    if (/[?&]selftest\b/.test(location.search)) selfTest(true);
+  }
+
+  window.Carryall = Object.freeze({
+    version: CORE_VERSION,
+    app: defineApp,
+    plugin(p) {
+      if (!p || !p.name) throw new Error('Carryall.plugin needs a name');
+      S.plugins.push(p);
+      Object.assign(S.viewTypes, p.views || {});
+    },
+    h, ui: UI, util: Util,
+    get api() { return makeApi(); },
+    selfTest,
+    _state: S, // for debugging only; not a stable API
+  });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else queueMicrotask(boot);
+})();
+</script>
+<script id="ca-app">
+/* ═══════════════════════════════════════════════════════════════════════
+   ASSET REGISTER: example Carryall app.
+   Schema history
+     v1  assets only; free-text "location", "value", boolean "disposed"
+     v2  sites become their own table; assets.location -> assets.site (ref)
+     v3  assets.value -> assets.cost; assets.disposed -> assets.status
+   ═══════════════════════════════════════════════════════════════════════ */
+const STATUS = ['In use', 'In storage', 'Under repair', 'Disposed'];
+
+Carryall.app({
+  id: 'asset-register',
+  name: 'Asset Register',
+  version: '1.2.0',
+  schemaVersion: 3,
+  description: 'Equipment across sites, with cost, age and straight-line book value.',
+  // Replace with your Azure Static Web App URL. localhost:8765 is for local testing (see README.md).
+  home: 'http://localhost:8765/asset-register.html',
+  versionUrl: 'http://localhost:8765/asset-register.version.json',
+  locale: 'en-GB',
+  currency: 'GBP',
+  fileName: 'asset-register',
+
+  settings: {
+    columns: {
+      owner:       { type: 'text', label: 'Register owner' },
+      asAt:        { type: 'date', label: 'Valuation date', help: 'Book values are calculated to this date. Leave blank to use today.' },
+      defaultLife: { type: 'number', label: 'Default useful life (years)', decimals: 0, min: 1, default: 5,
+                     help: 'Used when an asset has no useful life of its own.' },
+    },
+  },
+
+  tables: {
+    sites: {
+      label: 'Sites', singular: 'site', display: 'name',
+      columns: {
+        name:    { type: 'text', required: true, unique: true },
+        region:  { type: 'choice', options: ['North', 'Midlands', 'South', 'Scotland', 'Wales'] },
+        manager: { type: 'text' },
+        assets:  { type: 'computed', format: 'integer',
+                   fn: (r, api) => api.count('assets', a => a.site === r.id && a.status !== 'Disposed') },
+        bookValue: { type: 'computed', format: 'currency', label: 'Book value',
+                   fn: (r, api) => api.sum('assets', 'bookValue', a => a.site === r.id) },
+      },
+    },
+    assets: {
+      label: 'Assets', singular: 'asset', display: r => `${r.tag} ${r.name || ''}`.trim(),
+      columns: {
+        tag:       { type: 'text', label: 'Asset tag', required: true, unique: true, mono: true },
+        name:      { type: 'text', required: true },
+        category:  { type: 'choice', options: ['IT', 'Furniture', 'Vehicle', 'Plant', 'Other'] },
+        site:      { type: 'ref', table: 'sites', required: true },
+        purchased: { type: 'date', default: api => api.today },
+        cost:      { type: 'currency', min: 0 },
+        lifeYears: { type: 'number', label: 'Useful life (yrs)', decimals: 0, min: 1,
+                     help: 'Leave blank to use the default from Settings.' },
+        status:    { type: 'choice', options: STATUS, default: 'In use',
+                     colors: { 'In use': 'green', 'In storage': 'blue', 'Under repair': 'amber', 'Disposed': 'grey' } },
+        notes:     { type: 'longtext' },
+        ageYears:  { type: 'computed', label: 'Age (yrs)', format: 'number', decimals: 1,
+                     fn: (r, api) => r.purchased ? Math.max(0, api.util.yearsBetween(r.purchased, api.settings.asAt || api.today)) : null },
+        bookValue: { type: 'computed', label: 'Book value', format: 'currency',
+                     fn: (r, api) => {
+                       if (r.status === 'Disposed' || r.cost == null) return 0;
+                       const life = r.lifeYears || api.settings.defaultLife || 5;
+                       const age = api.value('assets', r, 'ageYears') || 0;
+                       return Math.round(r.cost * Math.max(0, 1 - age / life) * 100) / 100;
+                     } },
+      },
+    },
+  },
+
+  views: [
+    { type: 'dashboard', title: 'Overview', blocks: [
+      { type: 'kpi', items: [
+        { label: 'Assets in service', format: 'integer', value: api => api.count('assets', a => a.status !== 'Disposed') },
+        { label: 'Original cost', format: 'currency', value: api => api.sum('assets', 'cost', a => a.status !== 'Disposed') },
+        { label: 'Book value', format: 'currency', value: api => api.sum('assets', 'bookValue') },
+        { label: 'Sites', format: 'integer', value: api => api.count('sites') },
+      ] },
+      { type: 'summary', title: 'Book value by site', table: 'assets', groupBy: 'site',
+        metrics: [{ label: 'Book value', op: 'sum', column: 'bookValue' }, { label: 'Assets', op: 'count' }],
+        where: r => r.status !== 'Disposed' },
+      { type: 'summary', title: 'Assets by category', table: 'assets', groupBy: 'category',
+        metrics: [{ label: 'Assets', op: 'count' }, { label: 'Cost', op: 'sum', column: 'cost' }],
+        where: r => r.status !== 'Disposed' },
+      { type: 'summary', title: 'Spend by purchase year', table: 'assets', groupBy: 'purchased', bucket: 'year',
+        metrics: [{ label: 'Cost', op: 'sum', column: 'cost' }, { label: 'Assets', op: 'count' }], wide: true },
+    ] },
+    { type: 'table', title: 'Assets', table: 'assets',
+      columns: ['tag', 'name', 'category', 'site', 'purchased', 'cost', 'ageYears', 'bookValue', 'status'],
+      sort: { key: 'tag', dir: 'asc' }, totals: ['cost', 'bookValue'], filters: ['category', 'site', 'status'] },
+    { type: 'table', title: 'Sites', table: 'sites', sort: { key: 'name', dir: 'asc' }, totals: ['assets', 'bookValue'] },
+    { type: 'custom', title: 'Replacement plan', render: replacementPlan },
+    { type: 'settings', title: 'Settings', intro: 'Values that apply to the whole register.' },
+  ],
+
+  migrations: {
+    // v1 -> v2: free-text locations become rows in a new "sites" table.
+    2: (doc, ctx) => {
+      const assets = doc.tables.assets || [];
+      const sites = doc.tables.sites = doc.tables.sites || [];
+      const byName = new Map(sites.map(s => [s.name.toLowerCase(), s]));
+      for (const a of assets) {
+        const name = (a.location || '').trim() || 'Unassigned';
+        let site = byName.get(name.toLowerCase());
+        if (!site) { site = { id: ctx.uid(), name }; sites.push(site); byName.set(name.toLowerCase(), site); }
+        a.site = site.id;
+        delete a.location;
+      }
+    },
+    // v2 -> v3: "value" renamed to "cost"; "disposed" flag becomes a status.
+    3: doc => {
+      for (const a of doc.tables.assets || []) {
+        if ('value' in a) { a.cost = a.value; delete a.value; }
+        if (!a.status) a.status = a.disposed ? 'Disposed' : 'In use';
+        delete a.disposed;
+      }
+    },
+  },
+
+  fixtures: [
+    {
+      name: 'v1 file',
+      doc: { app: { id: 'asset-register', schemaVersion: 1 }, tables: { assets: [
+        { id: 'a1', tag: 'IT-001', name: 'Laptop', category: 'IT', location: 'Leeds', purchased: '2023-04-01', value: 1200, lifeYears: 3, disposed: false },
+        { id: 'a2', tag: 'IT-002', name: 'Laptop', category: 'IT', location: 'leeds ', purchased: '2020-01-10', value: 1100, disposed: true },
+        { id: 'a3', tag: 'FN-001', name: 'Desk', category: 'Furniture', location: '', value: 300 },
+      ] } },
+      expect: d => d.tables.sites.length === 2 && d.tables.assets.every(a => a.site && 'cost' in a && !('value' in a) && a.status)
+        && d.tables.assets[1].status === 'Disposed',
+    },
+    { name: 'empty v2 file', doc: { app: { id: 'asset-register', schemaVersion: 2 }, tables: { assets: [], sites: [] } } },
+  ],
+});
+
+// A custom view: assets at or near end of life, grouped by the year they fall due.
+function replacementPlan(el, api) {
+  const { h } = api;
+  const rows = api.rows('assets')
+    .filter(a => a.status !== 'Disposed' && a.purchased)
+    .map(a => {
+      const life = a.lifeYears || api.settings.defaultLife || 5;
+      const due = api.util.addMonths(a.purchased, Math.round(life * 12));
+      return { a, due };
+    })
+    .sort((x, y) => x.due.localeCompare(y.due));
+  const asAt = api.settings.asAt || api.today;
+  const overdue = rows.filter(r => r.due <= asAt);
+  const byYear = new Map();
+  for (const r of rows) {
+    const y = r.due.slice(0, 4);
+    byYear.set(y, (byYear.get(y) || 0) + (r.a.cost || 0));
+  }
+  el.append(
+    h('div', { class: 'ca-kpis' },
+      api.ui.kpi('Past end of life', String(overdue.length)),
+      api.ui.kpi('Cost to replace them', api.formatAs('currency', overdue.reduce((s, r) => s + (r.a.cost || 0), 0)))),
+    h('div', { class: 'ca-grid' },
+      api.ui.card('Replacement cost by year due',
+        api.ui.barChart([...byYear].map(([label, value]) => ({ label, value })), { format: v => api.formatAs('currency', v) })),
+      api.ui.card('Due soonest',
+        h('div', { class: 'ca-table-wrap' }, h('table', { class: 'ca-table' },
+          h('thead', h('tr', h('th', 'Asset'), h('th', 'Site'), h('th', 'Due'), h('th', { class: 'num' }, 'Cost'))),
+          h('tbody', rows.slice(0, 12).map(({ a, due }) => h('tr', {
+            class: 'clickable', onclick: () => api.openForm('assets', a.id) },
+            h('td', api.display('assets', a)),
+            h('td', api.format('assets', a, 'site')),
+            h('td', due <= asAt ? api.ui.pill(api.formatAs('date', due), 'red') : api.formatAs('date', due)),
+            h('td', { class: 'num' }, api.formatAs('currency', a.cost)))))))),
+    ),
+  );
+}
+</script>
+</body>
+</html>
