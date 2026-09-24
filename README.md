@@ -26,6 +26,8 @@ working for as long as browsers open HTML.
 | `examples/fixtures/asset-register-v1-saved.html` | An *old* saved copy (v1.0, schema 1) for testing upgrades. |
 | `examples/review-tracker.html` | Design review tracker for building projects: disciplines, review packages, comments and responses, a review matrix and a printable comment sheet. |
 | `examples/fixtures/review-tracker-sample.html` | A populated review tracker (9 reviews, 43 comments) to explore. |
+| `docs/CREATE-A-TOOL-WITH-COPILOT.md` | Guide for building a tool with Microsoft 365 Copilot, plus agent setup. |
+| `docs/copilot/` | Copilot agent instructions and the generated reference (knowledge) file. |
 | `docs/STYLE-GUIDE.md` | UI style and accessibility rules (WCAG 2.1 AA) that the core implements and apps must follow. |
 | `deploy/staticwebapp.config.json` | Sample Azure Static Web Apps config. |
 | `AGENTS.md` | Instructions for AI tools building a new Carryall app. |
