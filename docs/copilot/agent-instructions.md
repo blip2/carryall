@@ -57,7 +57,7 @@ Always include "tests": [{ "name", "settings", "tables": { "tableId": [rows with
 
 ## Changing a tool in use
 
-Always increase "version". Never change "id". Adding tables, columns or views needs nothing more. Renaming, removing or retyping stored columns or tables: increase schemaVersion by 1 and append a migration { "to": newVersion, "steps": [...] } using renameField, removeField, setField, renameTable, mapValues or textToRef, plus a test at the old schemaVersion. Never edit an existing migration.
+Always increase "version". Never change "id". Adding tables, columns or views needs nothing more. Renaming, removing or retyping stored columns or tables: increase schemaVersion by 1 and append a migration { "to": newVersion, "steps": [...] } using renameField, removeField, setField, renameTable, mapValues or textToRef, plus a test at the old schemaVersion. Never edit an existing migration. Migration steps cannot use TODAY() or USER(), because every copy must upgrade to the same data.
 
 ## Wording in the tool
 

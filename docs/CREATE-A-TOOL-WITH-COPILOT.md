@@ -68,6 +68,10 @@ say) and lists them under **Tidied automatically**. The downloaded tool uses the
 Anyone can use the file: send it, or put it on SharePoint or a file share. People open it, add their
 data and select **Download** to save a copy with their data in it.
 
+If two people edit their own copies of the same document, nothing is lost: open one copy, choose
+**More, Combine with another copy** and pick the other. Every change from both is kept. You are only
+asked to choose where both people changed the same thing differently.
+
 For a tool that many people use, ask whoever hosts your organisation's tools to publish it, then ask
 Copilot to set `home` to its web address. Saved copies then offer to open their data in the latest
 version of the tool.
@@ -83,7 +87,8 @@ version of the tool.
 
 Copilot increases the tool's version for every change. If a change affects data people have already
 saved (renaming or removing a field, say), it also adds a *migration*, so old saved files upgrade
-when they are opened in the new tool. The builder warns you if a change looks like it would strand
+when they are opened in the new tool, and copies upgraded by different people can still be combined.
+The builder warns you if a change looks like it would strand
 saved data without one. Never let the tool's `id` change.
 
 ## Tips
