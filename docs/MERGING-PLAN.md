@@ -1,6 +1,6 @@
 # Plan: combining copies edited by several people
 
-Status: agreed design (see section 8). Nothing here is implemented yet.
+Status: implemented in core 0.3.0. Section 9 lists where the implementation differs from this plan.
 
 ## 1. The problem
 
@@ -360,3 +360,37 @@ Each stage is releasable on its own and keeps every existing file working.
    files from before stamps).
 3. SharePoint co-authoring is not an alternative, because it cannot merge HTML files. Its version
    history is a good source for "the copy you both started from" in 4.5, and the guide should say so.
+
+## 9. Implementation notes (core 0.3.0)
+
+Built as planned, in `src/core.js` ("Change stamps" and "Combining copies"), with `tools/combine.mjs`.
+Where it differs, and why:
+
+- **Seal and "unsure" copies (added).** Testing showed a gap in 4.4: when an older core edits a
+  field that the other copy also changed, the stamps alone let the other copy win silently. Every
+  save now writes `sync.seal`, a fingerprint of the data. A copy whose data no longer matches its
+  seal is marked `sync.unsure`, and when combining, any of its values that would lose to the other
+  copy is shown as a choice instead. The flag is cleared by the next combine.
+- **Created by is not combined.** Each copy fills it in on its first download, so it would always
+  clash. A blank value is filled from the other copy; otherwise yours is kept.
+- **Same rows are matched before values are compared.** With the random ids older cores gave
+  `textToRef` rows, every link to them differed, which made dozens of conflicts. Rows each copy
+  created separately in a `textToRef` target table, with the same match value, are now offered as
+  **Join rows that are the same** before anything else, and their links follow. Repeated unique
+  values (such as two RC-0044 references) are still offered afterwards, with **Give theirs the next
+  free ref** suggested.
+- **Keep the newest** compares the time each editing session last changed something (`actors[a].at`),
+  or the file's save time for values with no stamp.
+- **JavaScript migrations** are followed by pruning stamps for rows and fields that no longer exist;
+  anything else they change shows up through the "same stamp, different value" rule.
+- **Command line**: `--tool` names the copy of the tool to run in (needed for files saved by a core
+  before 0.3.0). Problems the tool would offer to fix are listed, not fixed.
+- Not done: recording a migration id seed in `meta.migrations` (4.3 point 3). Ids come from the
+  document id and migration number, which is enough.
+
+Checks: the self-test gains combine checks (separate edits combine in either order, a repeat changes
+nothing, a clash is a conflict and does not come back once settled) and, for each old-schema test,
+"upgrades to the same row ids every time" and "copies upgraded separately combine cleanly". The
+flows were also exercised end to end in Chromium: menu, conflict and fix dialogs, undo and redo,
+recovery, the open and hand-off prompt, files without stamps (with and without the original), an
+edit made with core 0.2.0, and two v1 asset registers upgraded separately.

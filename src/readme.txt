@@ -172,13 +172,19 @@
  J4. Migrations. When stored data changes shape, bump schemaVersion from N to
     N+1 and add migrations[N+1] = (doc, ctx) => { ...mutate doc... }.
       doc is the whole file envelope {app, meta, settings, tables}. Mutate
-      it in place (or return a new one). ctx.uid() makes new row ids.
+      it in place (or return a new one). To create rows, use
+      ctx.stableId(...parts) for their ids (for example
+      ctx.stableId('sites', name)): the same parts give the same id in
+      every copy, so copies upgraded in different places still combine.
+      ctx.uid() makes a random id; avoid it in migrations.
     Rules: migrations are append-only. Never edit or delete a released
       migration. Each one must work on ANY file at the previous version,
       including empty tables and missing fields. Adding an optional column
       does not need a migration; renaming, splitting, retyping, or moving
       data does. Unknown fields are preserved, so removing a column from
-      the schema leaves old values in the file (harmless).
+      the schema leaves old values in the file (harmless). A migration
+      must give the same result wherever and whenever it runs: no dates,
+      user names or random values.
     Files saved by a NEWER schema open read-only with a warning.
  J5. Test. Open the file with ?selftest on the URL (or About, Run self-test).
     It checks the definition, renders every view, migrates each fixture:
@@ -227,7 +233,8 @@
                "updatedBy", "checkedBy", "checkedAt", "checkedHash",
                "revisions": [ ... ] },
      "settings": { ... },
-     "tables": { "<table>": [ { "id": "…", "<column>": value, … } ] } }
+     "tables": { "<table>": [ { "id": "…", "<column>": value, … } ] },
+     "sync": { ... } }   change stamps, see COMBINING COPIES
    The characters < are written as < inside the JSON (valid JSON).
 
  PLUGINS AND LIBRARIES
@@ -244,6 +251,30 @@
    Designed for hundreds to a few thousand rows in total (< 1 MB). A
    warning shows above 5,000 rows or 5 MB. Beyond ~20,000 rows use a
    database. No attachments or images in data.
+
+ COMBINING COPIES
+   When several people edit their own copies of the same document, open
+   one and choose More, Combine with another copy (or open or drop the
+   other copy and choose Combine with this document). Every change from
+   both copies is kept. Only a value changed differently in both, or a
+   row deleted in one copy and changed in the other, needs a choice:
+   Keep yours, Keep theirs, or Keep the newest (by the computers' clocks).
+   The tool then offers fixes for links to deleted rows and for repeated
+   references (both copies adding the next number). Combining is one
+   step you can undo; download afterwards to keep the combined copy.
+   Copies can be combined in any order, any number of times.
+   How it works: "sync" records, for each stored value, the editing
+   session that last changed it ("actor:n"), and for the document, how
+   far it has seen each session ("clock"). A value the other copy has
+   already seen loses to its newer one. Deleted rows leave a small
+   marker. "seal" is a fingerprint of the data at the last save, so a
+   copy changed by an older Carryall (before 0.3.0), which does not
+   record changes, is treated with care: its differences are shown as
+   choices rather than overwritten. Files from before 0.3.0 have no
+   "sync" at all; combining two of them asks about every difference
+   unless you also choose the copy they both started from.
+   tools/combine.mjs in the Carryall repository does the same from a
+   terminal.
 
  DOWNLOADING AND OPENING (for users)
    Download gives you a new copy of this file containing your data. Put it

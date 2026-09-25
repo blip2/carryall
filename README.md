@@ -18,6 +18,8 @@ builder and the [guide to building a tool with Copilot](https://blip2.github.io/
 - **Plain data**: a readable JSON block inside the file, plus a static HTML snapshot for no-JavaScript readers.
 - **Accessible by default**: the core follows [docs/STYLE-GUIDE.md](docs/STYLE-GUIDE.md) (Arial, 16px base,
   44px targets, keyboard support, labelled and announced form errors, light and dark modes).
+- **Combining copies**: when several people edit their own copies, **More, Combine with another copy** takes
+  in everyone's changes and asks only about real clashes (see [docs/MERGING-PLAN.md](docs/MERGING-PLAN.md)).
 - **Standard document properties** in every tool: project number and name, created/updated by, checked by
   (with a data fingerprint), and a revision log.
 
@@ -32,6 +34,7 @@ builder and the [guide to building a tool with Copilot](https://blip2.github.io/
 | `tools/build-site.mjs`, `site/`, `.github/workflows/pages.yml` | Publishes the examples, the guide and the reference to GitHub Pages on every push to `main`, rewriting `home` URLs to the Pages address. |
 | `tools/dev-server.mjs` | Local "home" server for testing (`http://localhost:8765/`). |
 | `tools/check.mjs` | Checks a tool definition in the terminal (`--selftest` also runs the self-test in headless Chromium). |
+| `tools/combine.mjs` | Combines copies of a document in the terminal (headless Chromium), the same way as the tool does. |
 | `.github/copilot-instructions.md`, `.github/prompts/` | GitHub Copilot instructions and `/new-tool` and `/change-tool` prompts for VS Code. See `docs/BUILD-WITH-GITHUB-COPILOT.md`. |
 | `examples/asset-register.html` | Example tool definition: schema v3, two migrations with tests, dashboards, settings. |
 | `examples/fixtures/asset-register-v1-saved.html` | An *old* saved copy (v1.0, schema 1, from when it was a JavaScript app) for testing upgrades. |
@@ -70,6 +73,16 @@ Open `http://localhost:8765/asset-register.html?selftest` to run the built-in se
 5. Click **Download**. The first time, you're asked for the project details and your name.
    Downloading is the default; an app can opt in to writing back to the opened file with `saveInPlace: true`.
 
+## Try combining copies
+
+1. Open `examples/fixtures/review-tracker-sample.html`, change a comment and **Download** it as `a.html`.
+2. Open the sample again, change a different field of the same comment (and, to see a clash, the field
+   you changed in step 1), delete a comment, and **Download** it as `b.html`.
+3. Open `a.html` and choose **More, Combine with another copy**, then pick `b.html`. Separate changes are
+   combined; a field changed in both asks you to choose. **Show what changed** lists everything.
+4. From a terminal: `node tools/combine.mjs a.html b.html -o combined.html` (add `--prefer newest` to settle
+   clashes, or `--tool examples/review-tracker.html` to combine files saved by an older core).
+
 ## Deploying a tool
 
 Deploy the app's `.html` file (with `<script id="ca-data">null</script>`) to the Azure Static Web App,
@@ -78,7 +91,7 @@ set `home` in the app definition to its URL, and optionally publish a `<app>.ver
 
 ## Status
 
-Phase 0 prototype, core 0.2.0. Tested in Chromium: self-test, v1 to v3 migration, edit, download
+Phase 0 prototype, core 0.3.0 (adds combining copies). Tested in Chromium: self-test, v1 to v3 migration, edit, download
 round trip, document properties, check fingerprint, recovery, keyboard use of tabs, sorting and forms, and the
 tool builder (check, copy problems, preview, download, change a tool). **Not yet tested:** the pop-up hand-off
 and save-in-place in a real Edge window, opening files from SharePoint/OneDrive, or the Copilot agent with the
