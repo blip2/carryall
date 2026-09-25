@@ -31,6 +31,8 @@
     banners: [],
     user: null,
     root: null,
+    seeding: false,       // true while onNew fills a new document
+    defineError: null,    // error thrown by Carryall.app(), shown instead of the app
   };
 
   // ── Small utilities ────────────────────────────────────────────────────
@@ -112,6 +114,23 @@
 
   // ── App definition ─────────────────────────────────────────────────────
   function defineApp(def) {
+    try { return buildApp(def); } catch (e) { S.defineError = e; throw e; }
+  }
+  // Tables, columns and settings fields may also be written as arrays of objects
+  // with an "id" (a shape LLMs often produce); they are keyed by that id here.
+  function keyed(x, what, fail) {
+    if (!Array.isArray(x)) return x || {};
+    const out = {};
+    x.forEach((item, i) => {
+      const k = item && (item.id || item.key);
+      if (!k) fail(`${what} ${i + 1} needs an "id"`);
+      if (out[k]) fail(`${what} "${k}" is defined twice`);
+      const { id: _id, key: _key, ...rest } = item;
+      out[k] = rest;
+    });
+    return out;
+  }
+  function buildApp(def) {
     if (S.app) throw new Error('Carryall.app() called twice');
     const fail = m => { throw new Error('Carryall app definition: ' + m); };
     if (!def || !def.id) fail('"id" is required');
@@ -122,20 +141,29 @@
       ...def,
     };
     app.tables = {};
-    for (const [tk, t] of Object.entries(def.tables || {})) app.tables[tk] = normTable(tk, t);
-    app.settings = def.settings ? normTable('settings', { label: 'Settings', ...def.settings }) : null;
+    for (const [tk, t] of Object.entries(keyed(def.tables, 'Table', fail))) app.tables[tk] = normTable(tk, t, fail);
+    if (def.onNew != null && typeof def.onNew !== 'function') fail('"onNew" must be a function (doc, api) => { ... }');
+    let settings = def.settings;
+    if (settings && !settings.columns && settings.fields) {
+      const { fields, defaults = {}, ...rest } = settings;
+      const columns = keyed(fields, 'Settings field', fail);
+      for (const [k, c] of Object.entries(columns)) if (c.default === undefined && defaults[k] !== undefined) c.default = defaults[k];
+      settings = { ...rest, columns };
+    }
+    app.settings = settings ? normTable('settings', { label: 'Settings', ...settings }, fail) : null;
     if (!app.views.length) app.views = Object.keys(app.tables).map(t => ({ type: 'table', table: t }));
     app.views = app.views.map((v, i) => ({ title: v.title || (v.table && app.tables[v.table]?.label) || `View ${i + 1}`, ...v }));
     S.app = app;
     return app;
   }
-  function normTable(key, t) {
+  function normTable(key, t, fail) {
     const columns = {};
-    for (const [ck, c] of Object.entries(t.columns || {})) {
+    for (const [ck, c] of Object.entries(keyed(t.columns, `Column in table "${key}"`, fail))) {
       const col = typeof c === 'string' ? { type: c } : { ...c };
       col.key = ck;
       col.type = col.type || 'text';
       col.label = col.label || titleCase(ck);
+      if (!col.options && Array.isArray(col.choices)) col.options = col.choices;
       columns[ck] = col;
     }
     const keys = Object.keys(columns);
@@ -206,7 +234,13 @@
       settings: settingsDefaults(),
       tables: Object.fromEntries(Object.keys(S.app.tables).map(k => [k, []])),
     };
-    if (typeof S.app.onNew === 'function') S.app.onNew(doc, makeApi());
+    if (typeof S.app.onNew === 'function') {
+      // Point the api at the new document so onNew can use api.insert/rows/update.
+      // Seeding is not an edit: no undo entry, no unsaved marker, no re-render.
+      const prev = S.data;
+      S.data = doc; S.seeding = true;
+      try { S.app.onNew(doc, makeApi()); } finally { S.data = prev; S.seeding = false; }
+    }
     return normalise(doc);
   }
   function normalise(doc) {
@@ -368,7 +402,14 @@
   async function startNew() {
     if (!(await guardDirty())) return;
     clearBanners('load'); clearBanners('recovery');
-    S.data = newDocument();
+    let doc;
+    try { doc = newDocument(); } catch (e) {
+      console.error(e);
+      addBanner('load', 'warn', `A new document could not be started because the tool's onNew failed: ${e.message}`);
+      render();
+      return;
+    }
+    S.data = doc;
     S.fileName = null; S.handle = null; S.readOnly = false; S.dirty = false;
     S.undo = []; S.redo = []; S.viewState = {}; S.tab = 0;
     render();
@@ -379,6 +420,7 @@
   function restore(snap) { const s = JSON.parse(snap); S.data.tables = s.tables; S.data.settings = s.settings; S.data.properties = s.properties; }
   function mutate(fn) {
     if (!S.data) throw new Error('No document is open.');
+    if (S.seeding) return fn(S.data);
     if (S.readOnly) { toast('This file is read-only.'); return; }
     S.undo.push(snapshot());
     if (S.undo.length > 100) S.undo.shift();
@@ -994,7 +1036,11 @@
       else if (typeof v === 'number' && c.max != null && v > c.max) errs[c.key] = `${c.label} must be ${c.max} or less`;
       else if (c.unique && v != null && t !== 'settings' && S.data.tables[t].some(r => r.id !== row.id && r[c.key] === v)) errs[c.key] = `${c.label} "${v}" is already used by another ${td.singular}`;
     }
-    if (typeof td.validate === 'function') Object.assign(errs, td.validate(row, makeApi()) || {});
+    if (typeof td.validate === 'function') {
+      const out = td.validate(row, makeApi());
+      if (typeof out === 'string' && out) errs._form = out; // a plain message applies to the whole form
+      else if (out && typeof out === 'object') Object.assign(errs, out);
+    }
     return errs;
   }
   function openForm(t, id, preset = {}) {
@@ -1016,6 +1062,8 @@
       fields[c.key] = f;
       return f.wrap;
     }));
+    const formErr = h('div', { class: 'ca-error', role: 'alert' });
+    body.append(formErr);
     refreshComputed();
     const buttons = [];
     if (existing && !ro) buttons.push({ label: 'Delete', danger: true, left: true, onClick: async () => {
@@ -1028,7 +1076,9 @@
     } });
     buttons.push({ label: ro ? 'Close' : 'Cancel', value: false });
     if (!ro) buttons.push({ label: existing ? 'Save changes' : `Add ${td.singular}`, primary: true, onClick: () => {
-      if (!showErrors(fields, validateRow(t, draft))) return false;
+      const errs = validateRow(t, draft);
+      formErr.textContent = errs._form || '';
+      if (!showErrors(fields, errs) || errs._form) return false;
       if (typeof td.onSave === 'function') td.onSave(draft, existing ? clone(existing) : null, makeApi());
       const { id: _id, ...rest } = draft;
       if (existing) updateRow(t, id, rest); else insertRow(t, rest);
@@ -1608,7 +1658,12 @@
   }
   async function boot() {
     S.root = document.getElementById('ca-root');
-    if (!S.app) { S.root.textContent = 'Carryall: no app defined. Add Carryall.app({...}) in <script id="ca-app">.'; return; }
+    if (!S.app) {
+      S.root.textContent = S.defineError
+        ? `Carryall: the app definition has an error. ${S.defineError.message}`
+        : 'Carryall: no app defined. Add Carryall.app({...}) in <script id="ca-app">.';
+      return;
+    }
     captureShell();
     S.isHome = computeIsHome();
     const api = makeApi();
