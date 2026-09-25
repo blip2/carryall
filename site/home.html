@@ -1,0 +1,53 @@
+<h1>Carryall</h1>
+<p class="lead">Carryall tools are single HTML files that hold structured data, a viewer and an editor.
+  Open a tool, add your data and download a copy. The copy works on its own, anywhere, with no server.</p>
+
+<h2 id="build">Build your own tool, without code</h2>
+<p>Describe the tool to Microsoft 365 Copilot. It writes a tool definition, and the tool builder checks it,
+  explains any problems in words Copilot can fix, lets you try the tool and downloads it.</p>
+<ol class="steps">
+  <li><strong>Describe it</strong>Tell the Carryall Tool Builder agent in Copilot what you want to keep track of and calculate.</li>
+  <li><strong>Check it</strong>Paste Copilot's definition into the tool builder. Copy any problems back to Copilot until it says Ready to use.</li>
+  <li><strong>Try it</strong>Preview the tool: add and edit rows and check the numbers.</li>
+  <li><strong>Download it</strong>Your finished tool is one HTML file. Share it, or have it hosted.</li>
+</ol>
+<div class="actions">
+  <a class="btn primary" href="carryall.html">Open the tool builder</a>
+  <a class="btn" href="guide.html">Read the guide</a>
+  <a class="btn" href="agent.html">Set up the Copilot agent</a>
+  <a class="btn" href="carryall.html" download>Download the blank template</a>
+</div>
+
+<h2 id="examples">Example tools</h2>
+<div class="cards">
+  <section class="card" aria-labelledby="rt">
+    <h3 id="rt">Design review tracker</h3>
+    <p>Discipline design reviews for a building project: review packages, comments, responses,
+      a who-reviews-whom matrix and a printable comment sheet.</p>
+    <div class="actions">
+      <a class="btn primary" href="review-tracker.html">Open the tool</a>
+      <a class="btn" href="fixtures/review-tracker-sample.html">Open a sample project</a>
+      <a class="btn" href="fixtures/review-tracker-sample.html" download>Download the sample</a>
+    </div>
+  </section>
+  <section class="card" aria-labelledby="ar">
+    <h3 id="ar">Asset register</h3>
+    <p>Equipment across sites, with cost, age and book value, a replacement plan and a dashboard.
+      It has changed twice since release, so old saved copies upgrade when opened.</p>
+    <div class="actions">
+      <a class="btn primary" href="asset-register.html">Open the tool</a>
+      <a class="btn" href="fixtures/asset-register-v1-saved.html" download>Download an old v1 copy</a>
+    </div>
+  </section>
+</div>
+<p class="muted">Both are built from tool definitions. To see one, open the tool, choose More, then Change this tool.</p>
+
+<h2 id="saved-copies">Try the saved-copy workflow</h2>
+<ol>
+  <li>Download the old v1 copy of the asset register and open it from your computer in Edge or Chrome.
+    It works on its own and shows a banner pointing to the latest version.</li>
+  <li>Select <strong>Open data in latest tool</strong>. The hosted tool opens and loads the data,
+    upgrading it from schema 1 to schema 3.</li>
+  <li>Make a change and select <strong>Download</strong>. You get a new copy with your data and the latest tool inside it.</li>
+</ol>
+<p class="muted">Everything runs in your browser. Nothing you enter is uploaded; data leaves the page only as a file you download.</p>

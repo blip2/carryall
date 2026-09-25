@@ -1,30 +1,34 @@
 <!DOCTYPE html>
-<html lang="en-GB" data-ca-core="0.1.0">
+<html lang="en-GB" data-ca-core="0.2.0">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Carryall starter</title>
+<title>Carryall tool builder</title>
 <!--ca-readme
 
  ██████  CARRYALL  ·  a single-file tool that carries its own data
  ─────────────────────────────────────────────────────────────────
- Core version: 0.1.0
+ Core version: 0.2.0
 
  WHAT THIS FILE IS
  This one HTML file is a complete app: structured data + viewer + editor.
  Open it in Edge or Chrome and it works. There is no server and no database.
  Users edit the data and save a new copy of this file (to SharePoint, a file
- share, anywhere). The copy contains the data AND the code that made it, so
- it keeps working on its own for as long as browsers can open HTML.
+ share, anywhere). The copy contains the data AND the definition of the tool
+ that made it, so it keeps working on its own for as long as browsers can
+ open HTML.
 
- The preferred workflow is to use the tool's hosted "home" copy (app.home,
- e.g. an Azure Static Web App). A saved file opened locally shows a banner
+ The preferred workflow is to use the tool's hosted "home" copy (home, e.g.
+ an Azure Static Web App). A saved file opened locally shows a banner
  offering to send its data to the home copy, which upgrades (migrates) the
  data to the latest schema. Saved copies stay usable offline regardless.
 
  WHERE THINGS ARE IN THIS FILE (all ids start with "ca-")
    <script id="ca-data" type="application/json">   THE DATA. Plain JSON, one
         row per line. "null" in a blank tool. Readable in any text editor.
+   <script id="ca-spec" type="application/json">   THE TOOL DEFINITION: the
+        tables, columns, formulas and views, as JSON. "null" in the blank
+        template, which then opens the tool builder. See the reference below.
    <style id="ca-core-css">    framework styles       (do not edit, see below)
    <style id="ca-app-css">     app styles             (edit freely)
    <div id="ca-root">          UI renders here; emptied when saving
@@ -33,8 +37,8 @@
    <script id="ca-vendor-*">   optional inlined libraries (one per block)
    <script id="ca-core">       the Carryall runtime   (do not edit, see below)
    <script id="ca-plugin-*">   optional plugins
-   <script id="ca-app">        THE APP DEFINITION: schema, calcs, views,
-        migrations. This is the only script an app author edits.
+   <script id="ca-app">        optional JavaScript: a tool written in code
+        instead of JSON (see JAVASCRIPT APPS), or plugin registrations.
 
  RULE: every <script>, <style> or <noscript> you add MUST have an id starting
  "ca-". Saving rebuilds the file from these blocks and drops anything else.
@@ -44,15 +48,401 @@
  ════════════════════════════════════════════════════════════════
  HOW TO BUILD A NEW TOOL (instructions for people and LLMs)
  ════════════════════════════════════════════════════════════════
- 1. Copy the blank template (carryall.html). Name it after the tool.
- 2. Edit ONLY <script id="ca-app"> (and optionally <style id="ca-app-css">).
- 3. Call Carryall.app({...}) once, with:
+ 1. Open the blank template (carryall.html) in Edge or Chrome. It shows the
+    tool builder.
+ 2. Write a tool definition: JSON, as described in the reference below.
+    The Carryall Tool Builder agent in Microsoft 365 Copilot writes one
+    from a plain description (see docs/CREATE-A-TOOL-WITH-COPILOT.md).
+ 3. Paste it into the builder and select Check definition. Every problem
+    is listed with a fix; Copy problems for Copilot copies them for the
+    agent. Repeat until it says Ready to use (this includes the self-test).
+ 4. Preview the tool, then Download it: a finished tool file with no data.
+ 5. To change a tool, open it and choose More, Change this tool.
+ 6. Release: increase version, and host the downloaded file as the home copy.
+    The home copy is simply the tool file with <script id="ca-data"> null.
+
+ An LLM editing a file directly (for example in VS Code) edits only
+ <script id="ca-spec"> (and optionally <style id="ca-app-css">), then opens
+ the file with ?selftest on the URL to run the self-test.
+
+ ════════════════════════════════════════════════════════════════
+ TOOL DEFINITION REFERENCE
+ ════════════════════════════════════════════════════════════════
+# Tool definition reference
+
+A Carryall tool is defined by a **tool definition**: one JSON object that lists the tool's tables,
+columns, calculations and views. There is no JavaScript to write. Open the blank template
+(`carryall.html`) in Edge or Chrome to get the **tool builder**. Paste a definition, select
+**Check definition**, fix any problems it lists, then **Preview** and **Download** the finished tool.
+To change a tool later, open it and choose **More, Change this tool**.
+
+The builder checks everything below and names each problem with a fix. Its **Copy problems for
+Copilot** button copies them in a form Copilot can act on.
+
+## The rules that matter most
+
+1. **JSON only.** Double quotes around every key and text value. No comments, no functions, no `=>`.
+2. **Ids.** The tool `id` is lower case words joined by hyphens (`snagging-tracker`). Table and column
+   ids are letters and numbers only, starting with a letter, in camelCase (`distributionNodes`,
+   `unitCost`). No hyphens or spaces. Never call a column `id`: every row already has one.
+3. **Every table** has `id`, `label`, `singular`, `display` (or `displayFormula`) and `columns`.
+4. **Calculations are formulas in quotes** (`"formula": "quantity * rate"`). Calculated values are
+   never stored, so they never appear in `seed` or `tests` rows.
+5. **Text inside a formula uses single quotes**: `status = 'Open'`.
+6. **To add up linked rows, use WHERE with `this`**: `SUM(loads.kw WHERE node = this)`. Inside WHERE,
+   plain names belong to the rows being added up; `this` is the row the formula belongs to.
+7. **No project number, project name, revision, created by, updated by or checked by columns.**
+   Every Carryall document already has these built in.
+8. **Include a test**: a few rows and the results you expect, so the self-test proves the sums.
+
+## Shape
+
+```text
+{
+  "id": "snagging-tracker",
+  "name": "Snagging tracker",
+  "version": "1.0.0",
+  "schemaVersion": 1,
+  "description": "Defects found on site, who must fix them and when.",
+  "settings": [ ...fields... ],
+  "tables": [ ...tables... ],
+  "views": [ ...views... ],
+  "seed": { "tableId": [ ...starting rows... ] },
+  "tests": [ ...tests... ],
+  "migrations": [ ...only when stored data changes shape... ]
+}
+```
+
+## Tool properties
+
+| Key | Required | What it is |
+|:-|:-|:-|
+| `id` | yes | Lower case words joined by hyphens. Files are matched to tools by this id, so never change it once the tool is in use. |
+| `name` | yes | The tool's title. |
+| `version` | yes | `"1.0.0"` for a new tool. Increase it every time the tool changes (`"1.1.0"`). |
+| `schemaVersion` | yes | `1` for a new tool. Increase by 1 only when stored data changes shape, and add a migration. |
+| `description` | no | One line shown on the start screen. |
+| `locale`, `currency` | no | Defaults `"en-GB"` and `"GBP"`. |
+| `fileName` | no | Default file name for downloads, without `.html`. |
+| `home` | no | Web address of the hosted copy. Saved copies offer to open their data there. |
+| `versionUrl` | no | Web address of a JSON file `{ "version": "1.2.0" }` used to tell saved copies an update exists. |
+| `identity` | no | `"azure-swa"` records the signed-in user when hosted on Azure Static Web Apps. |
+| `saveInPlace` | no | `true` lets Edge and Chrome save back to the opened file. Default is a download. |
+| `properties` | no | `false` switches off the built-in project details, or `{ "required": ["projectNumber"], "firstRevision": "A" }`. |
+
+## Settings
+
+Document-wide values, such as a default response period. A list of fields written exactly like
+columns (see below), except that settings cannot be `ref` or `computed`. Formulas read them as
+`settings.fieldId`. Show them with a `settings` view.
+
+```json
+"settings": [
+  { "id": "responseDays", "label": "Default response period (days)", "type": "number", "decimals": 0, "min": 1, "default": 10 }
+]
+```
+
+## Tables
+
+```json
+{
+  "id": "snags", "label": "Snags", "singular": "snag", "display": "ref",
+  "columns": [ ... ],
+  "checks": [ ... ],
+  "onSave": [ ... ]
+}
+```
+
+| Key | What it is |
+|:-|:-|
+| `id` | camelCase, unique. The key used in formulas and saved data. |
+| `label` | Plural name shown on tabs and headings. |
+| `singular` | The name for one row, used on buttons such as "Add snag". |
+| `display` | The column that names a row when another table links to it. |
+| `displayFormula` | Instead of `display`: a formula such as `"code & ' ' & name"`. |
+| `columns` | The list of columns. |
+| `checks` | Validation rules (see Checks). |
+| `onSave` | Values filled in automatically when a row is saved (see onSave rules). |
+| `readOnly` | `true` stops rows being added or edited in the tool. |
+
+## Columns
+
+```json
+{ "id": "priority", "label": "Priority", "type": "choice", "options": ["Critical", "Major", "Minor"],
+  "default": "Major", "required": true, "colors": { "Critical": "red", "Major": "amber", "Minor": "grey" } }
+```
+
+Keys every column can have: `id`, `label`, `type`, `required` (true or false), `unique`, `help`
+(guidance shown under the field), `hidden` (never shown), `hideInForm`, `mono` (monospace, for
+references and drawing numbers), `default` (a fixed value) and `defaultFormula` (a formula such
+as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-', 3)"`).
+
+| Type | Stores | Extra keys |
+|:-|:-|:-|
+| `text` | One line of text | `maxLength` |
+| `longtext` | Several lines of text | |
+| `number` | A number | `min`, `max`, `decimals`, `step` |
+| `currency` | Money as a plain number, such as 1234.5 | `min`, `max`, `currency` |
+| `percent` | A percentage stored as 15 for 15% | `min`, `max`, `decimals` |
+| `date` | A date written `"YYYY-MM-DD"` | |
+| `boolean` | `true` or `false`, shown as a tick box | `checkLabel` |
+| `choice` | One of a fixed list | `options` (required), `colors` |
+| `ref` | A link to a row in another table (it stores that row's id) | `table` (required), `display` |
+| `computed` | Nothing: it is calculated every time | `formula` (required), `format`, `decimals`, `colors`, `colorFormula` |
+
+- `colors` maps values to pill colours: grey, green, amber, red, blue, purple, teal, pink. Pills
+  always show their text, so colour is never the only signal.
+- `format` sets how a calculated value is shown: number, integer, currency, percent, date, text or
+  boolean. Without it, Carryall works it out from the formula.
+- `colorFormula` (calculated columns) returns a colour name, such as `"IF(overdue > 0, 'red', '')"`.
+- A `ref` column's `display` shows one column of the linked row in tables, such as `"display": "ref"`.
+
+## Formulas
+
+Formulas are like spreadsheet formulas, written without the `=`.
+
+| Where | The formula can use |
+|:-|:-|
+| `formula`, `colorFormula`, `displayFormula` of a table's column | That row's columns, linked rows, settings, table totals |
+| `where` of a table, summary, sheet or matrix view | The row being tested |
+| `checks[].errorIf` | The row being saved |
+| `onSave[].when` and `onSave[].formula` | The row being saved, and `before.column` for its value before the edit |
+| `defaultFormula`, KPI `formula`, test `formula` | Settings, `TODAY()`, `USER()` and table totals, but no row |
+
+**Values**: numbers (`12.5`), text in single quotes (`'Open'`), `TRUE`, `FALSE`, `BLANK()`.
+
+**Operators**: `+ - * / ^`, `&` joins text, `%` after a number divides by 100, comparisons
+`= <> < > <= >=`, and `AND`, `OR`, `NOT`. `status IN ('Open', 'Responded')` and `NOT IN` test a list.
+Text comparisons ignore upper and lower case.
+
+**Columns and links**: a column's id gives its value (`quantity * rate`). Follow a `ref` column with a
+dot to read the linked row: `site.name`, `review.reviewed.code`. `id` is the row's own id.
+
+**Settings**: `settings.responseDays`.
+
+**Table totals**: `SUM`, `COUNT`, `AVERAGE`, `MIN` and `MAX` work over another table, optionally
+filtered with `WHERE`:
+
+```text
+COUNT(snags)                                          all rows
+COUNT(snags WHERE status = 'Open')                    rows that match
+SUM(loads.kw WHERE node = this)                       rows linked to this row
+SUM(nodes.totalKw WHERE suppliedFrom = this)          a tree: child rows of this row
+AVERAGE(comments.daysOpen WHERE review.stage = 'Stage 3 Spatial Coordination')
+```
+
+Inside WHERE, plain names are the columns of the rows being counted; `this` is the row that owns the
+formula, and `this.column` reads its columns. Write `node = this`, never `node = id`.
+
+**Blanks**: blank counts as 0 in sums. Comparing a blank with `<`, `>`, `<=` or `>=` is always false, so
+`due < TODAY()` is false while `due` is empty. `status = ''` and `ISBLANK(status)` test for blank.
+Dividing by zero gives a blank.
+
+**Dates** are text such as `'2026-09-01'`. Add or take away days with `+` and `-` (`raised + 14`); two
+dates taken apart give days (`TODAY() - raised`). Compare dates with `<` and `>`.
+
+**Functions**
+
+| Group | Functions |
+|:-|:-|
+| Logic | `IF(test, then, else)`, `IFS(test1, value1, test2, value2, ...)`, `SWITCH(value, match1, result1, ..., default)`, `AND(...)`, `OR(...)`, `NOT(x)`, `ISBLANK(x)`, `IFBLANK(x, fallback)`, `COALESCE(a, b, ...)`, `BLANK()` |
+| Numbers | `ROUND(x, places)`, `ROUNDUP`, `ROUNDDOWN`, `CEILING(x, step)`, `FLOOR(x, step)`, `INT`, `ABS`, `SQRT`, `POWER(x, y)`, `MOD(x, y)`, `MIN(a, b, ...)`, `MAX(a, b, ...)`, `SUM(a, b, ...)`, `AVERAGE(a, b, ...)` |
+| Text | `CONCAT(a, b, ...)`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT(text, n)`, `RIGHT(text, n)`, `CONTAINS(text, part)`, `VALUE(text)` |
+| Dates | `TODAY()`, `DAYS(end, start)`, `YEARFRAC(start, end)`, `EDATE(date, months)`, `ADDDAYS(date, days)`, `YEAR`, `MONTH`, `DAY`, `DATE(year, month, day)` |
+| Tables | `SUM`, `COUNT`, `AVERAGE`, `MIN`, `MAX` as above; `NEXTREF(table.column, 'PREFIX-', digits)` gives the next reference, such as SN-004 |
+| Other | `USER()` is the name of the person using the tool |
+
+Not available: SUMIF, COUNTIF, VLOOKUP, XLOOKUP and similar. Use `SUM(table.column WHERE ...)`,
+`COUNT(table WHERE ...)` and links (`site.name`) instead.
+
+## Checks
+
+Rules that stop a row being saved while it is wrong. `errorIf` is a formula that is true when the row is
+wrong; `message` says what to do; `field` (optional) puts the message next to that field.
+
+```json
+"checks": [
+  { "errorIf": "status = 'Closed' AND ISBLANK(response)", "field": "response", "message": "Add the response before closing the comment." }
+]
+```
+
+Required, unique, `min` and `max` are checked automatically; no rule is needed for them.
+
+## onSave rules
+
+Values filled in automatically when a row is saved, applied in order. Each sets one `field` to a fixed
+`value` or a calculated `formula`, optionally only `when` a formula is true. `before.column` is the
+value before this edit (blank for a new row).
+
+```json
+"onSave": [
+  { "when": "status = 'Closed' AND ISBLANK(closed)", "field": "closed", "formula": "TODAY()" },
+  { "when": "status <> 'Closed'", "field": "closed", "value": null },
+  { "when": "NOT(ISBLANK(response)) AND ISBLANK(before.response)", "field": "status", "value": "Responded" }
+]
+```
+
+## Views
+
+Views are the tabs, in order. Without `views`, each table gets a plain table view.
+
+**table**: a searchable, sortable list. Select a row to edit it.
+
+```json
+{ "type": "table", "title": "Snags", "table": "snags", "columns": ["ref", "area", "status", "due"],
+  "sort": { "column": "ref", "dir": "asc" }, "filters": ["area", "status"], "totals": ["cost"],
+  "where": "status <> 'Closed'" }
+```
+
+Optional: `columns` (default all), `sort`, `filters` (drop-down filters), `totals` (number columns),
+`where`, `add: false` (no Add button), `readOnly: true`, `search: false`, `preset` (values for new
+rows, such as `{ "status": "Open" }`).
+
+**summary**: rows grouped by a column, with a bar chart and a table of totals.
+
+```json
+{ "type": "summary", "title": "Cost by area", "table": "snags", "groupBy": "area",
+  "metrics": [{ "label": "Snags", "op": "count" }, { "label": "Cost", "op": "sum", "column": "cost" }],
+  "where": "status <> 'Closed'" }
+```
+
+`op` is count, sum, avg, min or max. `bucket: "month"` or `"year"` groups a date column. `chart: false`
+hides the chart, or `chart: 1` charts the second metric. `showTable: false` hides the table.
+`sortBy: "label"` sorts groups by name.
+
+**kpi**: headline figures. Each `formula` is a table total or other document-level formula.
+
+```json
+{ "type": "kpi", "title": "Figures", "items": [
+  { "label": "Open snags", "formula": "COUNT(snags WHERE status = 'Open')", "format": "integer" },
+  { "label": "Cost to fix", "formula": "SUM(snags.cost WHERE status <> 'Closed')", "format": "currency" }
+] }
+```
+
+**dashboard**: several views on one tab. `blocks` holds kpi, summary, table, sheet and matrix views;
+kpi blocks and blocks with `"wide": true` span the full width.
+
+```text
+{ "type": "dashboard", "title": "Overview", "blocks": [ { "type": "kpi", ... }, { "type": "summary", ... } ] }
+```
+
+**settings**: a form for the tool's settings. Optional `fields` (setting ids) and `intro` text.
+
+**sheet**: one record at a time, with its linked rows listed underneath and a Print button. Good for
+comment sheets, schedules and reports.
+
+```json
+{ "type": "sheet", "title": "Comment sheet", "table": "reviews", "fields": ["title", "stage", "due", "status"],
+  "sort": { "column": "ref", "dir": "asc" },
+  "child": { "table": "comments", "link": "review", "columns": ["ref", "priority", "comment", "response", "status"],
+             "sort": { "column": "ref", "dir": "asc" } } }
+```
+
+`child.link` is the `ref` column in the child table that points to this view's table.
+
+**matrix**: a cross-tab. `rows` and `columns` are columns (or formulas, often links followed with a dot)
+whose values label the rows and columns. Each cell shows the metrics; select it to see the rows.
+
+```json
+{ "type": "matrix", "title": "Who reviews whom", "table": "comments", "rows": "review.reviewed",
+  "columns": "review.reviewing", "where": "status <> 'Withdrawn'",
+  "metrics": [{ "label": "Open", "op": "count", "where": "status IN ('Open', 'Responded')" }, { "label": "Total", "op": "count" }] }
+```
+
+## Seed: starting rows
+
+Rows every new document starts with, such as a list of disciplines. Give a row an `id` when other seed
+rows link to it. Leave calculated columns out.
+
+```json
+"seed": {
+  "areas": [ { "id": "gf", "name": "Ground floor" }, { "id": "ff", "name": "First floor" } ],
+  "snags": [ { "ref": "SN-001", "area": "gf", "description": "Scuffed door", "status": "Open" } ]
+}
+```
+
+## Tests
+
+Tests prove the calculations. The self-test loads each test's rows and checks the results. Give rows
+an `id` so expectations can name them. Columns with a fixed `default` are filled in automatically.
+
+```json
+"tests": [
+  { "name": "Overdue flag", "settings": { "dueDays": 14 },
+    "tables": {
+      "areas": [ { "id": "a1", "name": "Ground floor" } ],
+      "snags": [ { "id": "s1", "ref": "SN-001", "area": "a1", "description": "Scuffed door", "raised": "2020-01-01", "status": "Open" } ]
+    },
+    "expect": [
+      { "table": "snags", "row": "s1", "field": "due", "equals": "2020-01-15" },
+      { "table": "areas", "row": "a1", "field": "open", "equals": 1 },
+      { "table": "snags", "rows": 1 },
+      { "formula": "COUNT(snags WHERE overdue = 'Overdue') = 1" }
+    ] }
+]
+```
+
+An expectation is `{ "table", "row", "field", "equals" }` (add `"tolerance": 0.01` for rounding),
+`{ "table", "rows" }` for a row count, or `{ "formula" }` that must be true.
+
+## Changing a tool that is in use
+
+- Always increase `version`. Never change `id`.
+- Adding a table, a column or a view needs nothing else.
+- Renaming, removing or retyping a column or table changes the **shape** of stored data. Increase
+  `schemaVersion` by 1 and add a migration for the new number, so files saved by the old tool upgrade
+  when they are opened. Never edit or remove an existing migration.
+- Add a test with `"schemaVersion"` set to the old number and rows in the old shape, to prove the
+  upgrade.
+
+```json
+"migrations": [
+  { "to": 2, "description": "Locations become a Sites table", "steps": [
+    { "op": "textToRef", "table": "assets", "field": "location", "to": "site", "target": "sites", "match": "name", "blankValue": "Unassigned" }
+  ] },
+  { "to": 3, "steps": [
+    { "op": "renameField", "table": "assets", "from": "value", "to": "cost" },
+    { "op": "setField", "table": "assets", "field": "status", "formula": "IF(disposed, 'Disposed', 'In use')", "when": "ISBLANK(status)" },
+    { "op": "removeField", "table": "assets", "field": "disposed" }
+  ] }
+]
+```
+
+| Step | Keys | Does |
+|:-|:-|:-|
+| `renameField` | `table`, `from`, `to` | Renames a column in every row. |
+| `removeField` | `table`, `field` | Deletes a column's values. |
+| `setField` | `table`, `field`, `value` or `formula`, optional `when` | Sets a column in every row (or rows where `when` is true). Formulas here read the old row's columns only. |
+| `renameTable` | `from`, `to` | Renames a table. |
+| `mapValues` | `table`, `field`, `map` | Replaces values, such as `{ "Yes": "Approved" }`, for renamed options. |
+| `textToRef` | `table`, `field`, `to`, `target`, `match`, optional `blankValue` | Turns free text into links: finds or creates a `target` row whose `match` column equals the text. |
+
+A migration with `"steps": []` is fine when nothing needs converting.
+
+## Built in to every tool
+
+Project number and name, created by, updated by, checked by (with a data fingerprint), revisions,
+undo, recovery of unsaved work, CSV import and export, printing, and the saved-copy upgrade flow.
+Do not add columns for these.
+
+## Wording in the tool
+
+Sentence case. Plain UK English. Button labels are verbs. Help text and check messages say exactly
+what to do. No em dashes, no emoji. Never rely on colour alone.
+
+ ════════════════════════════════════════════════════════════════
+ JAVASCRIPT APPS (advanced, for developers)
+ ════════════════════════════════════════════════════════════════
+ A developer can define a tool in JavaScript instead, which allows custom
+ views written in code. Tools built from JSON are easier to check and to
+ change; prefer them. A JavaScript app leaves <script id="ca-spec"> null.
+ J1. Call Carryall.app({...}) once in <script id="ca-app">, with:
       id             stable kebab-case id. NEVER change it after release:
                      files are matched to tools by this id.
       name           display name
       version        semver of the app code, bump on every release
       schemaVersion  integer, starts at 1. Bump by 1 whenever the SHAPE of
-                     stored data changes, and add a migration (step 6).
+                     stored data changes, and add a migration (J4).
       description    one line shown on the start screen
       home           URL of the hosted copy (optional but recommended)
       versionUrl     URL of a JSON file {"version": "1.2.0"} used to tell
@@ -71,20 +461,21 @@
                      { required: ['projectNumber', 'projectName'],
                        firstRevision: 'P01' }  (these are the defaults)
                      or false to switch them off for a trivial tool.
-      tables         see step 4
+      tables         see J2
       settings       optional single record of document-wide values: same
                      shape as a table ({ columns: {...} }). Stored in
                      data.settings. Edited with a "settings" view.
-      views          see step 5 (defaults to one table view per table)
-      migrations     see step 6
-      fixtures       see step 7
+      views          see J3 (defaults to one table view per table)
+      migrations     see J4
+      fixtures       see J5
       onNew(doc, api)  optional: seed a brand new document
- 4. Define tables. Each row automatically gets a stable string "id".
+ J2. Define tables. Each row automatically gets a stable string "id".
       tables: {
         assets: {
           label: 'Assets', singular: 'asset',
           display: 'name',        // column (or fn(row)) used when referenced
-          validate: (row, api) => ({ field: 'message' }),  // optional
+          validate: (row, api) => ({ field: 'message' }),  // optional; a
+                  // plain string is shown as a message for the whole form
           onSave: (row, before, api) => { row.closed = ... },  // optional:
                   // adjust a row from the form before it is stored
                   // (before is null for a new row)
@@ -117,7 +508,7 @@
       api.util.daysBetween(a, b), yearsBetween, addDays, addMonths, parseDate.
     Store money as plain numbers in major units (1234.5). Store dates as
       "YYYY-MM-DD" strings. Store nothing derivable.
- 5. Define views (tabs). Types:
+ J3. Define views (tabs). Types:
       { type: 'table', table, title?, columns?: [keys], sort?: {key, dir},
         totals?: [keys], filters?: [keys] (computed columns allowed),
         where?: (row, api) => bool,
@@ -130,6 +521,10 @@
       { type: 'dashboard', title, blocks: [ ...kpi/summary/table/custom ] }
           kpi blocks and blocks with wide: true span the full width
       { type: 'settings', title, fields?: [keys], intro? }
+      { type: 'sheet', title, table, fields?, sort?, where?,
+        child?: { table, link (ref column), columns?, sort?, where? } }
+      { type: 'matrix', title, table, rows: column key or fn(row, api),
+        columns: same, metrics?: [{ label, op, column, where? }], where? }
       { type: 'custom', title, render: (el, api) => { el.append(...) } }
     Custom views build DOM with api.h(tag, props, ...children), which is
       XSS-safe (children become text). NEVER use innerHTML with data.
@@ -141,7 +536,7 @@
       api.ui.dialog / alert / confirm, api.toast(msg).
     NEVER mutate api.doc directly: use insert/update/remove/setSettings so
       undo, recovery and the unsaved-changes marker work.
- 6. Migrations. When stored data changes shape, bump schemaVersion from N to
+ J4. Migrations. When stored data changes shape, bump schemaVersion from N to
     N+1 and add migrations[N+1] = (doc, ctx) => { ...mutate doc... }.
       doc is the whole file envelope {app, meta, settings, tables}. Mutate
       it in place (or return a new one). ctx.uid() makes new row ids.
@@ -152,14 +547,11 @@
       data does. Unknown fields are preserved, so removing a column from
       the schema leaves old values in the file (harmless).
     Files saved by a NEWER schema open read-only with a warning.
- 7. Test. Open the file with ?selftest on the URL (or About, Run self-test).
+ J5. Test. Open the file with ?selftest on the URL (or About, Run self-test).
     It checks the definition, renders every view, migrates each fixture:
       fixtures: [{ name: 'v1 sample', doc: {app: {id, schemaVersion: 1},
                    tables: {...}}, expect: (doc, api) => boolean }]
     and round-trips an export. Keep one small fixture per old schema version.
- 8. Release: bump version, deploy the file as the home copy. The home copy
-    is simply this file with <script id="ca-data"> containing null.
-
  STYLE (full rules in docs/STYLE-GUIDE.md of the Carryall repository)
    The core styles already meet WCAG 2.1 AA: Arial, 16px base, rem units,
    44px targets, visible focus, light and dark modes. When writing an app:
@@ -228,6 +620,7 @@
    have not downloaded is kept in this browser as a recovery copy.
 -->
 <script type="application/json" id="ca-data">null</script>
+<script type="application/json" id="ca-spec">null</script>
 <style id="ca-core-css">
 /* Carryall core styles, implementing docs/STYLE-GUIDE.md.
    Apps adjust semantic tokens in #ca-app-css; never edit here, and never use raw hex in apps. */
@@ -559,6 +952,33 @@ body.ca-dragging::after {
 .ca-grid2 { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr)); }
 .ca-subhead { margin: 0.375rem 0 -0.25rem; font-size: 1rem; }
 
+/* ── Tool builder ───────────────────────────────────── */
+.ca-builder { max-width: 64rem; margin: 0 auto; }
+.ca-builder .ca-label { display: block; font-weight: 700; margin: 0.75rem 0 0.25rem; }
+.ca-builder .ca-banner { margin-bottom: 1rem; border: 1px solid var(--ca-border); border-left-width: 6px; border-radius: var(--ca-radius); }
+.ca-spec-input { min-height: 26rem; font-family: var(--ca-mono); font-size: 0.875rem; line-height: 1.45; tab-size: 2; white-space: pre; overflow: auto; }
+.ca-problems { margin: 0.75rem 0 0; padding-left: 1.75rem; display: grid; gap: 0.625rem; }
+.ca-problem-where { display: block; font-family: var(--ca-mono); font-size: 0.875rem; font-weight: 700; overflow-wrap: anywhere; }
+.ca-builder details > summary { cursor: pointer; font-weight: 700; min-height: var(--ca-target); display: flex; align-items: center; }
+#ca-builder-result:focus { outline: none; }
+#ca-builder-result:focus-visible { outline: 3px solid var(--ca-focus); }
+
+/* ── Sheet and matrix views ─────────────────────────── */
+.ca-tv-bar .ca-sheet-select { max-width: min(100%, 40rem); }
+.ca-sheet-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 0.25rem 1.5rem; margin: 0 0 1rem; }
+.ca-sheet-fields .wide { grid-column: 1 / -1; }
+.ca-sheet-fields dt { color: var(--ca-muted); font-size: 0.875rem; }
+.ca-sheet-fields dd { margin: 0 0 0.375rem; }
+.ca-sheet-sub { margin: 0 0 0.5rem; }
+.ca-pre { white-space: pre-wrap; }
+.ca-matrix th, .ca-matrix td { text-align: center; vertical-align: middle; }
+.ca-matrix th[scope="row"] { text-align: left; white-space: nowrap; }
+.ca-matrix-cell {
+  border: 1px solid var(--ca-border-strong); background: var(--ca-surface); border-radius: var(--ca-radius);
+  cursor: pointer; min-height: var(--ca-target); min-width: var(--ca-target); padding: 0 0.625rem; font-variant-numeric: tabular-nums;
+}
+.ca-matrix-cell:hover { background: var(--ca-accent-soft); }
+
 @media (max-width: 40rem) {
   .ca-main { padding: 0.75rem; }
   .ca-file-name { max-width: 22ch; }
@@ -570,6 +990,9 @@ body.ca-dragging::after {
   .ca-header { position: static; border-top: none; }
   body { background: #fff; }
   .ca-table th { position: static; }
+  .ca-sheet { border: none; padding: 0; }
+  .ca-sheet-table { font-size: 0.75rem; }
+  .ca-table-wrap { overflow: visible; }
 }
 </style>
 <style id="ca-app-css">
@@ -586,7 +1009,7 @@ body.ca-dragging::after {
 (function () {
   'use strict';
 
-  const CORE_VERSION = '0.1.0';
+  const CORE_VERSION = '0.2.0';
   const FORMAT = 'carryall/1';
   const PAGE = 500;                 // rows rendered before "show more"
   const SOFT_ROWS = 5000;           // size advisory thresholds
@@ -613,6 +1036,13 @@ body.ca-dragging::after {
     banners: [],
     user: null,
     root: null,
+    seeding: false,       // true while onNew fills a new document
+    defineError: null,    // error thrown by Carryall.app(), shown instead of the app
+    spec: null,           // the JSON tool definition, for tools built from one
+    mode: null,           // 'builder' | 'preview' while the tool builder is open
+    builder: null,
+    calc: null,           // per-render cache of calculated values (WeakMap row -> Map)
+    lastCalcError: null,
   };
 
   // ── Small utilities ────────────────────────────────────────────────────
@@ -695,6 +1125,23 @@ body.ca-dragging::after {
   // ── App definition ─────────────────────────────────────────────────────
   function defineApp(def) {
     if (S.app) throw new Error('Carryall.app() called twice');
+    try { return (S.app = buildApp(def)); } catch (e) { S.defineError = e; throw e; }
+  }
+  // Tables, columns and settings fields may also be written as arrays of objects
+  // with an "id" (a shape LLMs often produce); they are keyed by that id here.
+  function keyed(x, what, fail) {
+    if (!Array.isArray(x)) return x || {};
+    const out = {};
+    x.forEach((item, i) => {
+      const k = item && (item.id || item.key);
+      if (!k) fail(`${what} ${i + 1} needs an "id"`);
+      if (out[k]) fail(`${what} "${k}" is defined twice`);
+      const { id: _id, key: _key, ...rest } = item;
+      out[k] = rest;
+    });
+    return out;
+  }
+  function buildApp(def) {
     const fail = m => { throw new Error('Carryall app definition: ' + m); };
     if (!def || !def.id) fail('"id" is required');
     if (!Number.isInteger(def.schemaVersion) || def.schemaVersion < 1) fail('"schemaVersion" must be an integer >= 1');
@@ -704,20 +1151,28 @@ body.ca-dragging::after {
       ...def,
     };
     app.tables = {};
-    for (const [tk, t] of Object.entries(def.tables || {})) app.tables[tk] = normTable(tk, t);
-    app.settings = def.settings ? normTable('settings', { label: 'Settings', ...def.settings }) : null;
+    for (const [tk, t] of Object.entries(keyed(def.tables, 'Table', fail))) app.tables[tk] = normTable(tk, t, fail);
+    if (def.onNew != null && typeof def.onNew !== 'function') fail('"onNew" must be a function (doc, api) => { ... }');
+    let settings = def.settings;
+    if (settings && !settings.columns && settings.fields) {
+      const { fields, defaults = {}, ...rest } = settings;
+      const columns = keyed(fields, 'Settings field', fail);
+      for (const [k, c] of Object.entries(columns)) if (c.default === undefined && defaults[k] !== undefined) c.default = defaults[k];
+      settings = { ...rest, columns };
+    }
+    app.settings = settings ? normTable('settings', { label: 'Settings', ...settings }, fail) : null;
     if (!app.views.length) app.views = Object.keys(app.tables).map(t => ({ type: 'table', table: t }));
     app.views = app.views.map((v, i) => ({ title: v.title || (v.table && app.tables[v.table]?.label) || `View ${i + 1}`, ...v }));
-    S.app = app;
     return app;
   }
-  function normTable(key, t) {
+  function normTable(key, t, fail) {
     const columns = {};
-    for (const [ck, c] of Object.entries(t.columns || {})) {
+    for (const [ck, c] of Object.entries(keyed(t.columns, `Column in table "${key}"`, fail))) {
       const col = typeof c === 'string' ? { type: c } : { ...c };
       col.key = ck;
       col.type = col.type || 'text';
       col.label = col.label || titleCase(ck);
+      if (!col.options && Array.isArray(col.choices)) col.options = col.choices;
       columns[ck] = col;
     }
     const keys = Object.keys(columns);
@@ -788,7 +1243,13 @@ body.ca-dragging::after {
       settings: settingsDefaults(),
       tables: Object.fromEntries(Object.keys(S.app.tables).map(k => [k, []])),
     };
-    if (typeof S.app.onNew === 'function') S.app.onNew(doc, makeApi());
+    if (typeof S.app.onNew === 'function') {
+      // Point the api at the new document so onNew can use api.insert/rows/update.
+      // Seeding is not an edit: no undo entry, no unsaved marker, no re-render.
+      const prev = S.data;
+      S.data = doc; S.seeding = true;
+      try { S.app.onNew(doc, makeApi()); } finally { S.data = prev; S.seeding = false; }
+    }
     return normalise(doc);
   }
   function normalise(doc) {
@@ -899,6 +1360,7 @@ body.ca-dragging::after {
     await offerRecovery(source);
   }
   async function openFile(file, handle = null) {
+    if (S.mode === 'builder') return builderLoadFile(file);
     const name = file.name || 'file';
     const ext = name.toLowerCase().split('.').pop();
     const text = await file.text();
@@ -950,7 +1412,14 @@ body.ca-dragging::after {
   async function startNew() {
     if (!(await guardDirty())) return;
     clearBanners('load'); clearBanners('recovery');
-    S.data = newDocument();
+    let doc;
+    try { doc = newDocument(); } catch (e) {
+      console.error(e);
+      addBanner('load', 'warn', `A new document could not be started because the tool's onNew failed: ${e.message}`);
+      render();
+      return;
+    }
+    S.data = doc;
     S.fileName = null; S.handle = null; S.readOnly = false; S.dirty = false;
     S.undo = []; S.redo = []; S.viewState = {}; S.tab = 0;
     render();
@@ -961,6 +1430,7 @@ body.ca-dragging::after {
   function restore(snap) { const s = JSON.parse(snap); S.data.tables = s.tables; S.data.settings = s.settings; S.data.properties = s.properties; }
   function mutate(fn) {
     if (!S.data) throw new Error('No document is open.');
+    if (S.seeding) return fn(S.data);
     if (S.readOnly) { toast('This file is read-only.'); return; }
     S.undo.push(snapshot());
     if (S.undo.length > 100) S.undo.shift();
@@ -1030,12 +1500,48 @@ body.ca-dragging::after {
       default: return String(v);
     }
   }
+  // Calculated values are cached for the length of one render (see withCalc), and a
+  // calculation that comes back round to itself is stopped and shown as #ERR.
+  const calcActive = new Map();
+  const warned = new Set();
   function rawValue(t, row, key) {
     const col = colDef(t, key);
-    if (col && col.type === 'computed') {
-      try { return col.fn(row, makeApi()); } catch (e) { console.warn(`[carryall] computed ${t}.${key} failed`, e); return NaN; }
+    if (!col || col.type !== 'computed') return row[key];
+    const cache = S.calc && row && typeof row === 'object' ? S.calc.get(row) : null;
+    if (cache && cache.has(key)) return cache.get(key);
+    let active = calcActive.get(row);
+    if (active && active.has(key)) throw new Error(`Circular calculation: "${col.label}" depends on itself`);
+    if (!active) calcActive.set(row, active = new Set());
+    active.add(key);
+    let v;
+    try { v = col.fn(row, makeApi()); }
+    catch (e) {
+      v = NaN;
+      S.lastCalcError = `${col.label}: ${e.message}`;
+      const w = `${t}.${key}: ${e.message}`;
+      if (!warned.has(w)) { warned.add(w); console.warn(`[carryall] calculated column ${t}.${key} failed`, e); }
+    } finally {
+      active.delete(key);
+      if (!active.size) calcActive.delete(row);
     }
-    return row[key];
+    if (S.calc && row && typeof row === 'object') {
+      let c = S.calc.get(row);
+      if (!c) S.calc.set(row, c = new Map());
+      c.set(key, v);
+    }
+    return v;
+  }
+  function withCalc(fn) {
+    if (S.calc) return fn();
+    S.calc = new WeakMap();
+    try { return fn(); } finally { S.calc = null; }
+  }
+  const rowIndex = new WeakMap();
+  function rowById(t, id) {
+    const rows = tableRows(t);
+    let ix = rowIndex.get(rows);
+    if (!ix || ix.n !== rows.length) { ix = { n: rows.length, map: new Map(rows.map(r => [r.id, r])) }; rowIndex.set(rows, ix); }
+    return ix.map.get(id) || null;
   }
   function colDef(t, key) { return t === 'settings' ? S.app.settings?.columns[key] : S.app.tables[t]?.columns[key]; }
   function displayOf(t, row) {
@@ -1069,8 +1575,9 @@ body.ca-dragging::after {
   }
 
   // ── Public API handed to views, computed columns, plugins ──────────────
+  let apiObj = null;
   function makeApi() {
-    return {
+    return apiObj || (apiObj = {
       get doc() { return S.data; },
       get app() { return S.app; },
       get settings() { return S.data ? S.data.settings : settingsDefaults(); },
@@ -1082,7 +1589,7 @@ body.ca-dragging::after {
       setProperties: patch => mutate(d => Object.assign(d.properties, patch)),
       openProperties,
       rows: tableRows,
-      row: (t, id) => tableRows(t).find(r => r.id === id) || null,
+      row: (t, id) => rowById(t, id),
       value: rawValue,
       display: displayOf,
       format: formatCell,
@@ -1094,7 +1601,7 @@ body.ca-dragging::after {
       openForm,
       toast, h, ui: UI, util: Util,
       rerender: render,
-    };
+    });
   }
 
   // ── Recovery (IndexedDB autosave of unsaved work) ──────────────────────
@@ -1125,7 +1632,7 @@ body.ca-dragging::after {
   };
   const recKey = () => `${S.app.id}/${S.data.meta.docId}`;
   const scheduleRecovery = debounce(() => {
-    if (!S.data || !S.dirty) return;
+    if (!S.data || !S.dirty || S.mode === 'preview') return;
     IDB.put({ key: recKey(), appId: S.app.id, fileName: S.fileName, at: nowISO(), data: clone(S.data) }).catch(e => console.warn('[carryall] recovery save failed', e));
   }, 800);
   async function offerRecovery(source) {
@@ -1576,7 +2083,11 @@ body.ca-dragging::after {
       else if (typeof v === 'number' && c.max != null && v > c.max) errs[c.key] = `${c.label} must be ${c.max} or less`;
       else if (c.unique && v != null && t !== 'settings' && S.data.tables[t].some(r => r.id !== row.id && r[c.key] === v)) errs[c.key] = `${c.label} "${v}" is already used by another ${td.singular}`;
     }
-    if (typeof td.validate === 'function') Object.assign(errs, td.validate(row, makeApi()) || {});
+    if (typeof td.validate === 'function') {
+      const out = td.validate(row, makeApi());
+      if (typeof out === 'string' && out) errs._form = out; // a plain message applies to the whole form
+      else if (out && typeof out === 'object') Object.assign(errs, out);
+    }
     return errs;
   }
   function openForm(t, id, preset = {}) {
@@ -1598,6 +2109,8 @@ body.ca-dragging::after {
       fields[c.key] = f;
       return f.wrap;
     }));
+    const formErr = h('div', { class: 'ca-error', role: 'alert' });
+    body.append(formErr);
     refreshComputed();
     const buttons = [];
     if (existing && !ro) buttons.push({ label: 'Delete', danger: true, left: true, onClick: async () => {
@@ -1610,7 +2123,9 @@ body.ca-dragging::after {
     } });
     buttons.push({ label: ro ? 'Close' : 'Cancel', value: false });
     if (!ro) buttons.push({ label: existing ? 'Save changes' : `Add ${td.singular}`, primary: true, onClick: () => {
-      if (!showErrors(fields, validateRow(t, draft))) return false;
+      const errs = validateRow(t, draft);
+      formErr.textContent = errs._form || '';
+      if (!showErrors(fields, errs) || errs._form) return false;
       if (typeof td.onSave === 'function') td.onSave(draft, existing ? clone(existing) : null, makeApi());
       const { id: _id, ...rest } = draft;
       if (existing) updateRow(t, id, rest); else insertRow(t, rest);
@@ -1762,6 +2277,8 @@ body.ca-dragging::after {
     kpi: renderKpis,
     dashboard: renderDashboard,
     settings: renderSettings,
+    sheet: renderSheet,
+    matrix: renderMatrix,
     custom: (el, v, api) => v.render(el, api),
   };
   function renderView(el, view, key) {
@@ -1818,17 +2335,15 @@ body.ca-dragging::after {
     const more = h('div', { style: { textAlign: 'center', marginTop: '10px' } });
     el.append(more);
 
-    function refresh() {
+    const refresh = () => withCalc(refreshRows);
+    function refreshRows() {
       const all = tableRows(t);
       let rows = all.filter(r => (!view.where || view.where(r, api)) && Object.entries(vs.filters).every(([fk, fv]) => !fv || String(rawValue(t, r, fk)) === fv));
       if (vs.q) {
         const q = vs.q.toLowerCase();
         rows = rows.filter(r => cols.some(c => formatCell(t, r, c.key).toLowerCase().includes(q)));
       }
-      if (vs.sort) {
-        const { key: sk, dir } = vs.sort, m = dir === 'desc' ? -1 : 1;
-        rows = rows.map(r => [sortKey(t, r, sk), r]).sort(([a], [b]) => (a == null || a === '') ? 1 : (b == null || b === '') ? -1 : (a < b ? -m : a > b ? m : 0)).map(x => x[1]);
-      }
+      if (vs.sort) rows = sortRows(t, rows, vs.sort);
       tbody.replaceChildren(...(rows.length ? rows.slice(0, vs.limit).map(r => h('tr', { class: 'clickable', tabindex: 0, onclick: () => openForm(t, r.id), onkeydown: e => { if (e.key === 'Enter') openForm(t, r.id); } },
         cols.map(c => h('td', { class: `${isNumericCol(c) ? 'num' : ''}${c.type === 'computed' ? ' ca-computed' : ''}${c.type === 'longtext' ? ' ca-long' : ''}` }, cellNode(t, r, c)))))
         : [h('tr', h('td', { class: 'ca-empty', colspan: cols.length }, all.length ? 'No matching rows' : `No ${td.label.toLowerCase()} yet`))]));
@@ -1845,8 +2360,8 @@ body.ca-dragging::after {
     refresh();
   }
   function groupLabel(t, row, col, bucket) {
-    if (col.type === 'date' && bucket) {
-      const v = row[col.key];
+    if ((col.type === 'date' || (col.type === 'computed' && col.format === 'date')) && bucket) {
+      const v = rawValue(t, row, col.key);
       if (!v) return ['', '(no date)'];
       if (bucket === 'year') return [v.slice(0, 4), v.slice(0, 4)];
       const d = parseDate(v);
@@ -1886,7 +2401,7 @@ body.ca-dragging::after {
     }
     let list = [...groups.values()].map(g => ({ ...g, values: metrics.map(m => metricValue(t, g.rows, m)) }));
     if (col.type === 'choice' && !view.sortBy) list.sort((a, b) => col.options.indexOf(a.key) - col.options.indexOf(b.key));
-    else if (col.type === 'date' || view.sortBy === 'label') list.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+    else if (col.type === 'date' || col.format === 'date' || view.sortBy === 'label') list.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
     else list.sort((a, b) => (b.values[0] ?? 0) - (a.values[0] ?? 0));
     const fmts = metrics.map(m => metricFormat(t, m));
     const card = h('div', { class: 'ca-card' }, view.title && h('h2', view.title));
@@ -1944,19 +2459,42 @@ body.ca-dragging::after {
   }
 
   // ── Page rendering ─────────────────────────────────────────────────────
-  function render() {
+  function render() { withCalc(renderPage); }
+  function renderPage() {
     const root = S.root;
     if (!root) return;
     const focusKey = document.activeElement?.dataset?.caFocus;
+    const skip = h('a', { class: 'ca-skip', href: '#ca-main', onclick: e => { e.preventDefault(); document.getElementById('ca-main')?.focus(); } }, 'Skip to content');
+    if (S.mode === 'builder') {
+      root.replaceChildren(skip, renderBuilderHeader(), h('main', { class: 'ca-main', id: 'ca-main', tabindex: '-1' }, renderBuilder()),
+        h('footer', { class: 'ca-footer' }, h('div', { class: 'ca-footer-inner' }, h('span', `Carryall ${CORE_VERSION}`),
+          h('a', { href: GUIDE_URL, target: '_blank', rel: 'noopener' }, 'Guide to building tools with Copilot'))));
+      if (focusKey) root.querySelector(`[data-ca-focus="${focusKey}"]`)?.focus();
+      document.title = S.builder.previous ? `Change ${S.builder.previous.name}` : 'Carryall tool builder';
+      return;
+    }
     const panel = S.data ? h('div', S.app.views.length > 1 ? { role: 'tabpanel', id: 'ca-panel', 'aria-labelledby': `ca-tab-${S.tab}` } : null, renderCurrentView()) : renderLanding();
-    root.replaceChildren(
-      h('a', { class: 'ca-skip', href: '#ca-main', onclick: e => { e.preventDefault(); document.getElementById('ca-main')?.focus(); } }, 'Skip to content'),
-      renderHeader(), renderBanners(), S.data ? renderTabs() : '',
+    root.replaceChildren(skip, renderHeader(), renderBanners(), S.data ? renderTabs() : '',
       h('main', { class: 'ca-main', id: 'ca-main', tabindex: '-1' }, panel), renderFooter());
     if (focusKey) root.querySelector(`[data-ca-focus="${focusKey}"]`)?.focus();
-    document.title = `${S.dirty ? '• ' : ''}${S.fileName ? S.fileName + ' – ' : ''}${S.app.name}`;
+    document.title = S.mode === 'preview' ? `Preview: ${S.app.name}` : `${S.dirty ? '• ' : ''}${S.fileName ? S.fileName + ' – ' : ''}${S.app.name}`;
+  }
+  function renderBuilderHeader() {
+    const b = S.builder;
+    return h('header', { class: 'ca-header' }, h('div', { class: 'ca-header-main' },
+      h('div', { class: 'ca-titles' }, h('h1', { class: 'ca-title' }, b.previous ? `Tool builder: ${b.previous.name}` : 'Carryall tool builder')),
+      b.saved && h('div', { class: 'ca-toolbar', role: 'toolbar', 'aria-label': 'Builder actions' },
+        h('button', { class: 'ca-btn', onclick: closeBuilder }, `Back to ${b.previous.name}`))));
   }
   function renderHeader() {
+    if (S.mode === 'preview') {
+      return h('header', { class: 'ca-header' }, h('div', { class: 'ca-header-main' },
+        h('div', { class: 'ca-titles' }, h('h1', { class: 'ca-title' }, S.app.name),
+          h('div', { class: 'ca-meta' }, h('span', 'Preview. Nothing you enter here is kept.'))),
+        h('div', { class: 'ca-toolbar', role: 'toolbar', 'aria-label': 'Preview actions' },
+          h('button', { class: 'ca-btn', onclick: backToBuilder }, 'Back to the builder'),
+          h('button', { class: 'ca-btn primary', onclick: downloadTool }, 'Download the tool'))));
+    }
     const has = !!S.data;
     const btn = (label, onclick, opts = {}) => h('button', { class: `ca-btn${opts.primary ? ' primary' : ''}`, onclick, disabled: opts.disabled, title: opts.title }, label);
     const menu = h('details', { class: 'ca-menu' }, h('summary', { class: 'ca-btn' }, 'More', h('span', { 'aria-hidden': 'true' }, ' ▾')), h('div', { class: 'ca-menu-list' },
@@ -1967,6 +2505,7 @@ body.ca-dragging::after {
       has && h('button', { onclick: () => window.print() }, 'Print'),
       S.app.home && !S.isHome && h('button', { onclick: openInHome }, S.data ? 'Open data in latest tool' : 'Go to latest tool'),
       h('button', { onclick: startNew }, 'Start new document'),
+      S.spec && h('button', { onclick: openBuilder }, 'Change this tool…'),
       h('button', { onclick: showAbout }, 'About this file')));
     // Row 1: tool name + actions. Row 2 (meta line): document properties and file state.
     return h('header', { class: 'ca-header' },
@@ -2007,7 +2546,7 @@ body.ca-dragging::after {
   function renderBanners() {
     const wrap = c => (Array.isArray(c) ? groupText(c) : [h('span', c)]);
     const list = [...S.banners];
-    if (S.app.home && !S.isHome && !S.homeBannerDismissed) {
+    if (S.app.home && !S.isHome && !S.homeBannerDismissed && S.mode !== 'preview') {
       list.unshift({ id: 'home', kind: 'info', content: [
         `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`,
         h('span', { class: 'ca-spacer' }),
@@ -2095,7 +2634,8 @@ body.ca-dragging::after {
   }
 
   // ── Self-test (for app authors and LLMs) ───────────────────────────────
-  function selfTest(show = false) {
+  function selfTest(show = false) { return withCalc(() => runSelfTest(show)); }
+  function runSelfTest(show) {
     const res = [];
     const ok = (name, pass, detail = '') => res.push({ pass: !!pass, name, detail });
     const app = S.app;
@@ -2123,8 +2663,22 @@ body.ca-dragging::after {
         ok(`view "${v.title}" renders`, !errs.length && !probe.textContent.includes('failed to render') && !probe.textContent.includes('Unknown view type'), errs.join('; '));
         probe.textContent = '';
       });
+      // Starting rows (onNew) must calculate and pass the tables' own checks.
+      for (const [tk, td] of Object.entries(app.tables)) {
+        const rows = S.data.tables[tk];
+        if (!rows.length) continue;
+        for (const c of Object.values(td.columns)) {
+          if (c.type !== 'computed') continue;
+          S.lastCalcError = null;
+          const bad = rows.find(r => { const v = rawValue(tk, r, c.key); return typeof v === 'number' && isNaN(v); });
+          ok(`${tk}.${c.key} calculates for the starting rows`, !bad, bad ? `${displayOf(tk, bad) || bad.id}: ${S.lastCalcError || 'invalid number'}` : '');
+        }
+        const invalid = rows.map(r => [r, validateRow(tk, r)]).find(([, e]) => Object.keys(e).length);
+        ok(`${tk} starting rows are valid`, !invalid, invalid ? `${displayOf(tk, invalid[0]) || invalid[0].id}: ${Object.values(invalid[1]).join('; ')}` : '');
+      }
       const saved = S.data;
       for (const fx of app.fixtures || []) {
+        S.lastCalcError = null;
         try {
           let d = clone(fx.doc);
           if ((d.app?.schemaVersion || 1) < app.schemaVersion) d = migrate(d);
@@ -2135,8 +2689,11 @@ body.ca-dragging::after {
             if (c.type === 'computed') { const v = rawValue(tk, r, c.key); if (typeof v === 'number' && isNaN(v)) bad++; }
             if (c.type === 'ref' && r[c.key] && !d.tables[c.table].some(x => x.id === r[c.key])) bad++;
           }
-          ok(`fixture "${fx.name}" migrates cleanly`, !bad, bad ? `${bad} bad values` : '');
-          if (fx.expect) ok(`fixture "${fx.name}" expectations`, fx.expect(d, makeApi()) !== false);
+          ok(`fixture "${fx.name}" migrates cleanly`, !bad, bad ? `${bad} bad values${S.lastCalcError ? ` (${S.lastCalcError})` : ''}` : '');
+          if (fx.expect) {
+            const out = fx.expect(d, makeApi());
+            ok(`fixture "${fx.name}" expectations`, out !== false && typeof out !== 'string', typeof out === 'string' ? out : '');
+          }
         } catch (e) { ok(`fixture "${fx.name}"`, false, e.message); }
         finally { S.data = saved; }
       }
@@ -2158,12 +2715,1896 @@ body.ca-dragging::after {
     return { passed: res.length - failed.length, failed: failed.length, results: res };
   }
 
+  // ── Formulas ───────────────────────────────────────────────────────────
+  // A small spreadsheet-like language for tool definitions: calculated columns, conditions,
+  // KPIs and rules. It is parsed and interpreted here; nothing is ever passed to eval.
+  const FX_RESERVED = ['and', 'or', 'not', 'in', 'where', 'true', 'false', 'null', 'blank', 'this', 'settings', 'before', 'id'];
+  const FX_TABLE_FNS = ['SUM', 'COUNT', 'AVERAGE', 'MIN', 'MAX', 'NEXTREF'];
+  // name: [fewest arguments, most arguments, result type]
+  const FX_FNS = {
+    IF: [2, 3], IFS: [2, 99], SWITCH: [3, 99], AND: [1, 99, 'boolean'], OR: [1, 99, 'boolean'], NOT: [1, 1, 'boolean'],
+    ISBLANK: [1, 1, 'boolean'], IFBLANK: [2, 2], COALESCE: [1, 99], BLANK: [0, 0],
+    ROUND: [1, 2, 'number'], ROUNDUP: [1, 2, 'number'], ROUNDDOWN: [1, 2, 'number'], ABS: [1, 1, 'number'], SQRT: [1, 1, 'number'],
+    POWER: [2, 2, 'number'], MOD: [2, 2, 'number'], INT: [1, 1, 'number'], CEILING: [1, 2, 'number'], FLOOR: [1, 2, 'number'],
+    SUM: [1, 99, 'number'], AVERAGE: [1, 99, 'number'], MIN: [1, 99], MAX: [1, 99], COUNT: [1, 1, 'number'],
+    CONCAT: [1, 99, 'text'], LEN: [1, 1, 'number'], UPPER: [1, 1, 'text'], LOWER: [1, 1, 'text'], TRIM: [1, 1, 'text'],
+    LEFT: [1, 2, 'text'], RIGHT: [1, 2, 'text'], CONTAINS: [2, 2, 'boolean'], VALUE: [1, 1, 'number'],
+    TODAY: [0, 0, 'date'], USER: [0, 0, 'text'], DAYS: [2, 2, 'number'], YEARFRAC: [2, 2, 'number'], EDATE: [2, 2, 'date'],
+    ADDDAYS: [2, 2, 'date'], YEAR: [1, 1, 'number'], MONTH: [1, 1, 'number'], DAY: [1, 1, 'number'], DATE: [3, 3, 'date'],
+    NEXTREF: [3, 3, 'text'],
+  };
+  const FX_ALIASES = { AVG: 'AVERAGE', IFNULL: 'IFBLANK', NVL: 'IFBLANK', ISNULL: 'ISBLANK', ISEMPTY: 'ISBLANK', CONCATENATE: 'CONCAT', LENGTH: 'LEN' };
+  const FX_HINTS = {
+    SUMIF: 'Use SUM(table.column WHERE condition).', SUMIFS: 'Use SUM(table.column WHERE condition AND condition).',
+    COUNTIF: 'Use COUNT(table WHERE condition).', COUNTIFS: 'Use COUNT(table WHERE condition AND condition).',
+    AVERAGEIF: 'Use AVERAGE(table.column WHERE condition).', COUNTA: 'Use COUNT(table WHERE NOT(ISBLANK(column))).',
+    NOW: 'Use TODAY().', DATEDIF: 'Use DAYS(end, start) or YEARFRAC(start, end).', IIF: 'Use IF(condition, value if true, value if false).',
+    LOOKUP: 'Follow a link column instead, for example site.name.', VLOOKUP: 'Follow a link column instead, for example site.name.',
+    XLOOKUP: 'Follow a link column instead, for example site.name.', INDEX: 'Follow a link column instead, for example site.name.',
+  };
+  class FxError extends Error { constructor(msg, at) { super(msg); this.at = at; } }
+  const isIsoDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const QUOTES = { "'": "'", '"': '"', '‘': '’', '“': '”', '’': '’', '”': '”' };
+
+  function fxTokens(src) {
+    const out = [];
+    let i = 0;
+    while (i < src.length) {
+      const c = src[i], at = i;
+      if (/\s/.test(c)) { i++; continue; }
+      if (/\d/.test(c) || (c === '.' && /\d/.test(src[i + 1] || ''))) {
+        const m = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(src.slice(i));
+        out.push({ t: 'num', v: parseFloat(m[0]), at }); i += m[0].length; continue;
+      }
+      if (QUOTES[c]) {
+        const close = QUOTES[c];
+        let s = ''; i++;
+        for (;;) {
+          if (i >= src.length) throw new FxError('A piece of text is missing its closing quote', at);
+          if (src[i] === close) { if (src[i + 1] === close) { s += close; i += 2; continue; } i++; break; }
+          s += src[i++];
+        }
+        out.push({ t: 'str', v: s, at }); continue;
+      }
+      if (/[A-Za-z_]/.test(c)) {
+        const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i));
+        out.push({ t: 'id', v: m[0], at }); i += m[0].length; continue;
+      }
+      const two = src.slice(i, i + 2);
+      if (['<=', '>=', '<>', '!=', '==', '&&', '||'].includes(two)) { out.push({ t: 'op', v: two, at }); i += 2; continue; }
+      const one = { ';': ',', '≤': '<=', '≥': '>=', '≠': '<>', '−': '-', '×': '*', '÷': '/' }[c] || c;
+      if (['+', '-', '*', '/', '^', '&', '=', '<', '>', '(', ')', ',', '.', '!', '%', '<=', '>=', '<>'].includes(one)) { out.push({ t: 'op', v: one, at }); i++; continue; }
+      throw new FxError(`"${c}" is not allowed in a formula`, at);
+    }
+    out.push({ t: 'end', at: src.length });
+    return out;
+  }
+
+  function fxParse(src) {
+    if (typeof src !== 'string' || !src.trim()) throw new FxError('The formula is empty', 0);
+    const tk = fxTokens(src);
+    let p = 0;
+    const peek = (o = 0) => tk[Math.min(p + o, tk.length - 1)];
+    const isOp = (v, o = 0) => peek(o).t === 'op' && peek(o).v === v;
+    const isKw = (v, o = 0) => peek(o).t === 'id' && peek(o).v.toUpperCase() === v;
+    const desc = t => (t.t === 'end' ? 'the end of the formula' : `"${t.t === 'str' ? "'" + t.v + "'" : t.v}"`);
+    const fail = (m, t = peek()) => { throw new FxError(m, t.at); };
+    const eat = v => { if (!isOp(v)) fail(`Expected "${v}" but found ${desc(peek())}`); return tk[p++]; };
+    const expr = () => or();
+    function or() { let a = and(); while (isKw('OR') || isOp('||')) { const at = tk[p++].at; a = { t: 'bin', op: 'OR', a, b: and(), at }; } return a; }
+    function and() { let a = not(); while (isKw('AND') || isOp('&&')) { const at = tk[p++].at; a = { t: 'bin', op: 'AND', a, b: not(), at }; } return a; }
+    function not() {
+      if ((isKw('NOT') && !isKw('IN', 1)) || isOp('!')) { const at = tk[p++].at; return { t: 'not', a: not(), at }; }
+      return cmp();
+    }
+    function cmp() {
+      let a = cat();
+      for (;;) {
+        const t = peek();
+        if (t.t === 'op' && ['=', '==', '<>', '!=', '<', '>', '<=', '>='].includes(t.v)) {
+          p++;
+          a = { t: 'bin', op: { '==': '=', '!=': '<>' }[t.v] || t.v, a, b: cat(), at: t.at };
+        } else if (isKw('IN') || (isKw('NOT') && isKw('IN', 1))) {
+          const neg = isKw('NOT');
+          if (neg) p++;
+          const at = tk[p++].at;
+          eat('(');
+          const list = [expr()];
+          while (isOp(',')) { p++; list.push(expr()); }
+          eat(')');
+          a = { t: 'in', a, list, neg, at };
+        } else return a;
+      }
+    }
+    function cat() { let a = add(); while (isOp('&')) { const at = tk[p++].at; a = { t: 'bin', op: '&', a, b: add(), at }; } return a; }
+    function add() { let a = mul(); while (isOp('+') || isOp('-')) { const t = tk[p++]; a = { t: 'bin', op: t.v, a, b: mul(), at: t.at }; } return a; }
+    function mul() { let a = pow(); while (isOp('*') || isOp('/')) { const t = tk[p++]; a = { t: 'bin', op: t.v, a, b: pow(), at: t.at }; } return a; }
+    function pow() { const a = unary(); if (isOp('^')) { const t = tk[p++]; return { t: 'bin', op: '^', a, b: pow(), at: t.at }; } return a; }
+    function unary() {
+      if (isOp('-') || isOp('+')) { const t = tk[p++]; const a = unary(); return t.v === '-' ? { t: 'neg', a, at: t.at } : a; }
+      let a = primary();
+      while (isOp('%')) { const t = tk[p++]; a = { t: 'bin', op: '/', a, b: { t: 'lit', v: 100, at: t.at }, at: t.at }; }
+      return a;
+    }
+    function primary() {
+      const t = peek();
+      if (t.t === 'num' || t.t === 'str') { p++; return { t: 'lit', v: t.v, at: t.at }; }
+      if (isOp('(')) { p++; const a = expr(); eat(')'); return a; }
+      if (t.t === 'id') {
+        const up = t.v.toUpperCase();
+        if (isOp('(', 1)) return call();
+        if (up === 'TRUE' || up === 'FALSE') { p++; return { t: 'lit', v: up === 'TRUE', at: t.at }; }
+        if (up === 'NULL' || up === 'BLANK') { p++; return { t: 'lit', v: null, at: t.at }; }
+        if (['AND', 'OR', 'NOT', 'IN', 'WHERE'].includes(up)) fail(`"${t.v}" is in the wrong place. Check the formula around it`);
+        const parts = [t.v];
+        p++;
+        while (isOp('.')) {
+          p++;
+          if (peek().t !== 'id') fail(`Expected a column name after "${parts.join('.')}."`);
+          parts.push(tk[p++].v);
+        }
+        return { t: 'path', parts, at: t.at };
+      }
+      fail(t.t === 'end' ? 'The formula ends too early. Check for a missing value or bracket' : `Unexpected ${desc(t)}`);
+    }
+    function call() {
+      const t = tk[p++];
+      p++;
+      const args = [];
+      let where = null;
+      if (!isOp(')')) {
+        for (;;) {
+          args.push(expr());
+          if (isKw('WHERE')) {
+            if (args.length > 1 || where) fail('WHERE can only follow the first argument, as in SUM(table.column WHERE condition)');
+            p++;
+            where = expr();
+          }
+          if (isOp(',')) { p++; continue; }
+          break;
+        }
+      }
+      eat(')');
+      return { t: 'call', name: t.v.toUpperCase(), raw: t.v, args, where, at: t.at };
+    }
+    const ast = expr();
+    if (peek().t !== 'end') fail(`Unexpected ${desc(peek())}. Check for a missing operator, comma or bracket`);
+    return ast;
+  }
+
+  // ── Formula checking (against the tool's tables) ───────────────────────
+  // sch: { tables: { key: { cols: { key: col } } }, settings: { key: col } }
+  // sc:  { sch, table, thisTable, where, before, raw, deps }
+  const TYPE_OF = { text: 'text', longtext: 'text', choice: 'text', number: 'number', currency: 'number', percent: 'number', date: 'date', boolean: 'boolean' };
+  const FORMAT_TYPE = { number: 'number', integer: 'number', currency: 'number', percent: 'number', date: 'date', text: 'text', boolean: 'boolean' };
+  function colInfo(col) {
+    if (col.type === 'ref') return { type: 'ref', ref: col.table };
+    if (col.type === 'computed') return { type: (col.format && FORMAT_TYPE[col.format]) || col._type || 'any' };
+    return { type: TYPE_OF[col.type] || 'any' };
+  }
+  function closest(name, options) {
+    const lev = (a, b) => {
+      const d = Array.from({ length: b.length + 1 }, (_, i) => i);
+      for (let i = 1; i <= a.length; i++) {
+        let prev = d[0]; d[0] = i;
+        for (let j = 1; j <= b.length; j++) { const tmp = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = tmp; }
+      }
+      return d[b.length];
+    };
+    const n = String(name).toLowerCase();
+    let best = null, score = Infinity;
+    for (const o of options) {
+      const s = lev(n, String(o).toLowerCase());
+      if (s < score) { best = o; score = s; }
+    }
+    return best != null && score <= Math.max(2, Math.floor(n.length / 3)) ? best : null;
+  }
+  function unknownMsg(what, name, options, extra = '') {
+    const best = closest(name, options);
+    const list = options.length && options.length <= 15 ? ` Known: ${options.join(', ')}.` : '';
+    return `Unknown ${what}.${best ? ` Did you mean "${best}"?` : list}${extra ? ' ' + extra : ''}`;
+  }
+  function fxCheck(n, sc) {
+    const fail = m => { throw new FxError(m, n.at); };
+    switch (n.t) {
+      case 'lit': return { type: n.v === null ? 'any' : typeof n.v === 'number' ? 'number' : typeof n.v === 'boolean' ? 'boolean' : isIsoDate(n.v) ? 'date' : 'text' };
+      case 'neg': fxCheck(n.a, sc); return { type: 'number' };
+      case 'not': fxCheck(n.a, sc); return { type: 'boolean' };
+      case 'in': { const a = fxCheck(n.a, sc); n.list.forEach(x => fxCheckCompare(n, a, fxCheck(x, sc), sc)); return { type: 'boolean' }; }
+      case 'bin': {
+        const a = fxCheck(n.a, sc), b = fxCheck(n.b, sc);
+        n.types = [a.type, b.type];
+        if (n.op === '=' || n.op === '<>') fxCheckCompare(n, a, b, sc);
+        if (['AND', 'OR', '=', '<>', '<', '>', '<=', '>='].includes(n.op)) return { type: 'boolean' };
+        if (n.op === '&') return { type: 'text' };
+        if (n.op === '+' || n.op === '-') {
+          if (a.type === 'date' && b.type === 'date') {
+            if (n.op === '+') fail('Two dates cannot be added. To find the days between them, subtract one from the other');
+            return { type: 'number' };
+          }
+          if (a.type === 'date' || (b.type === 'date' && n.op === '+')) return { type: 'date' };
+          if (b.type === 'date') fail('A date cannot be taken away from a number');
+          return { type: a.type === 'text' || b.type === 'text' ? 'any' : 'number' };
+        }
+        if (a.type === 'date' || b.type === 'date') fail(`Dates cannot be used with "${n.op}". Use DAYS(end, start) to get a number of days`);
+        return { type: 'number' };
+      }
+      case 'path': return fxCheckPath(n, sc);
+      case 'call': return fxCheckCall(n, sc);
+    }
+    fail('This formula could not be read');
+  }
+  // Comparing a link column with "id" inside WHERE is the classic mistake: that "id" is the
+  // row being tested, not the row that owns the formula. "this" is what is meant.
+  function fxCheckCompare(n, a, b, sc) {
+    for (const [x, y] of [[a, b], [b, a]]) {
+      if (sc.where && x.type === 'ref' && x.col && !x.outer && y.bareId) {
+        throw new FxError(`Inside WHERE, "id" is the id of the ${sc.table} row being tested, so this is never true. To match the row this formula belongs to, use "this", for example ${x.text} = this`, n.at);
+      }
+      if (x.type === 'ref' && y.type === 'ref' && x.ref && y.ref && x.ref !== y.ref && (x.col || y.col)) {
+        throw new FxError(`${x.text} links to "${x.ref}" but ${y.text} is a "${y.ref}" row, so they never match. Check the column names`, n.at);
+      }
+    }
+  }
+  function fxCheckPath(n, sc) {
+    const fail = m => { throw new FxError(m, n.at); };
+    const [head, ...rest] = n.parts;
+    const low = head.toLowerCase();
+    const text = n.parts.join('.');
+    let table, parts;
+    if (low === 'this') {
+      if (!sc.thisTable) fail('"this" only works in formulas that belong to a table, such as a calculated column');
+      if (!rest.length) return { type: 'ref', ref: sc.thisTable, isThis: true, text };
+      table = sc.thisTable; parts = rest;
+      if (sc.deps && rest[0] !== 'id') sc.deps.add(rest[0]);
+    } else if (low === 'settings') {
+      const keys = Object.keys(sc.sch.settings);
+      if (!rest.length) fail(`Name a setting, for example settings.${keys[0] || 'name'}`);
+      const col = sc.sch.settings[rest[0]];
+      if (!col) fail(unknownMsg(`setting "${rest[0]}"`, rest[0], keys, keys.length ? '' : 'This tool has no settings. Add them to the "settings" list.'));
+      if (rest.length > 1) fail(`settings.${rest[0]} is not a link, so ".${rest[1]}" cannot follow it`);
+      return colInfo(col);
+    } else if (low === 'before') {
+      if (!sc.before) fail('"before" only works in onSave rules, where it means the row as it was before the edit');
+      if (!rest.length) fail('Name a column, for example before.status');
+      table = sc.table; parts = rest;
+    } else {
+      if (sc.raw) return { type: 'any' }; // migrations work on old data, so names are not checked
+      if (!sc.table) {
+        if (sc.sch.tables[head]) fail(`"${head}" is a table. Here, use a total such as COUNT(${head}) or SUM(${head}.column WHERE condition)`);
+        fail(`"${head}" is not known here. This formula does not belong to a table row, so it can use settings, TODAY() and table totals such as SUM(table.column)`);
+      }
+      table = sc.table; parts = n.parts;
+      if (sc.deps && !sc.where && head !== 'id') sc.deps.add(head);
+    }
+    let info = null;
+    for (let i = 0; i < parts.length; i++) {
+      const key = parts[i];
+      const td = sc.sch.tables[table];
+      if (key === 'id') {
+        if (i < parts.length - 1) fail('"id" cannot be followed by "."');
+        return { type: 'ref', ref: table, bareId: i === 0 && low !== 'this' && low !== 'before', text };
+      }
+      const col = td.cols[key];
+      if (!col) {
+        const isTable = i === 0 && sc.sch.tables[key];
+        fail(unknownMsg(`column "${key}" in table "${table}"`, key, Object.keys(td.cols),
+          isTable ? `"${key}" is a table: add up its rows with SUM(${key}.column WHERE condition) or count them with COUNT(${key} WHERE condition).` : ''));
+      }
+      info = { ...colInfo(col), col: true, outer: low === 'this', text };
+      if (i < parts.length - 1) {
+        if (col.type !== 'ref') fail(`"${key}" is not a link to another table, so ".${parts[i + 1]}" cannot follow it`);
+        table = col.table;
+      }
+    }
+    return info;
+  }
+  function fxCheckCall(n, sc) {
+    const fail = m => { throw new FxError(m, n.at); };
+    const name = FX_ALIASES[n.name] || n.name;
+    n.fn = name;
+    const sig = FX_FNS[name];
+    if (!sig) fail(FX_HINTS[n.name] ? `${n.raw}() is not available. ${FX_HINTS[n.name]}` : unknownMsg(`function ${n.raw}()`, name, Object.keys(FX_FNS)));
+    const head = n.args[0] && n.args[0].t === 'path' ? n.args[0].parts : null;
+    const tableForm = FX_TABLE_FNS.includes(name) && head && !!sc.sch.tables[head[0]];
+    const anyTable = Object.keys(sc.sch.tables)[0] || 'table';
+    if (name === 'COUNT' && !tableForm) fail(`COUNT counts the rows of a table, for example COUNT(${anyTable} WHERE condition).${head ? ` "${head[0]}" is not a table.` : ''}`);
+    if (name === 'NEXTREF' && !tableForm) fail(`NEXTREF needs a table column first, for example NEXTREF(${anyTable}.ref, 'REF-', 3)`);
+    if (n.where && !tableForm) fail(`WHERE needs a table first, for example SUM(${anyTable}.column WHERE condition).${head ? ` "${head[0]}" is not a table.` : ''}`);
+    if (n.args.length < sig[0] || n.args.length > sig[1]) {
+      const want = sig[0] === sig[1] ? `${sig[0]}` : sig[1] === 99 ? `at least ${sig[0]}` : `${sig[0]} or ${sig[1]}`;
+      fail(`${name}() needs ${want} value${want === '1' ? '' : 's'} inside its brackets, but has ${n.args.length}`);
+    }
+    if (tableForm) {
+      if (sc.raw) fail('Table totals cannot be used in a migration step');
+      n.agg = true;
+      n.table = head[0];
+      n.field = head[1] || null;
+      if (head.length > 2) fail(`Only one column can follow the table name, as in ${name}(${head[0]}.${head[1]} WHERE ...)`);
+      const td = sc.sch.tables[n.table];
+      let info = { type: 'number' };
+      if (n.field && n.field !== 'id') {
+        const col = td.cols[n.field];
+        if (!col) fail(unknownMsg(`column "${n.field}" in table "${n.table}"`, n.field, Object.keys(td.cols)));
+        info = colInfo(col);
+        if ((name === 'SUM' || name === 'AVERAGE') && ['text', 'date', 'boolean', 'ref'].includes(info.type)) fail(`${name} needs a number column, but "${n.table}.${n.field}" is ${col.type === 'computed' ? 'not a number' : col.type}`);
+      }
+      if ((name === 'SUM' || name === 'AVERAGE' || name === 'NEXTREF') && !n.field) fail(`${name} needs a column after the table name, for example ${name}(${n.table}.${Object.keys(td.cols)[0] || 'column'})`);
+      if (n.where) fxCheck(n.where, { ...sc, table: n.table, where: true });
+      n.args.slice(1).forEach(a => fxCheck(a, sc));
+      if (name === 'MIN' || name === 'MAX') return { type: info.type === 'ref' ? 'any' : info.type };
+      return { type: sig[2] };
+    }
+    const types = n.args.map(a => fxCheck(a, sc).type);
+    if (sig[2]) return { type: sig[2] };
+    if (name === 'IF') return { type: types.length > 2 && types[1] !== types[2] && types[2] !== 'any' ? (types[1] === 'any' ? types[2] : 'any') : types[1] };
+    if (['IFBLANK', 'COALESCE', 'MIN', 'MAX'].includes(name)) return { type: types.find(t => t !== 'any') || 'any' };
+    return { type: 'any' };
+  }
+
+  // ── Formula evaluation ─────────────────────────────────────────────────
+  // cx: { table, row, thisTable, thisRow, before, raw, settings }
+  const fxBlank = v => v == null || v === '';
+  function fxTruthy(v) {
+    if (typeof v === 'number') return v !== 0 && !isNaN(v);
+    if (typeof v === 'string') return v !== '' && !['false', 'no', '0'].includes(v.trim().toLowerCase());
+    return !!v;
+  }
+  function fxNum(v, n) {
+    if (v == null || v === '') return 0;
+    if (typeof v === 'number') return v;
+    if (typeof v === 'boolean') return v ? 1 : 0;
+    const s = String(v).trim();
+    if (isIsoDate(s)) throw new FxError(`The date ${s} cannot be used as a number here. Use DAYS(end, start) for a number of days`, n && n.at);
+    const x = Number(s.replace(/,/g, ''));
+    if (s === '' || isNaN(x)) throw new FxError(`"${s}" is text, not a number`, n && n.at);
+    return x;
+  }
+  function fxStr(v) {
+    if (v == null) return '';
+    if (typeof v === 'number') return isFinite(v) ? String(+v.toFixed(10)) : '';
+    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    return String(v);
+  }
+  function fxEq(a, b) {
+    if (fxBlank(a) || fxBlank(b)) {
+      if (fxBlank(a) && fxBlank(b)) return true;
+      const o = fxBlank(a) ? b : a;
+      return o === 0 || o === false;
+    }
+    if (typeof a === 'number' || typeof b === 'number') { const x = Number(a), y = Number(b); return !isNaN(x) && !isNaN(y) && Math.abs(x - y) < 1e-9 * Math.max(1, Math.abs(x)); }
+    if (typeof a === 'boolean' || typeof b === 'boolean') return fxTruthy(a) === fxTruthy(b);
+    return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+  }
+  function fxCmp(a, b) {
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    const x = Number(a), y = Number(b);
+    if (typeof a !== 'string' || typeof b !== 'string') { if (!isNaN(x) && !isNaN(y)) return x - y; }
+    const s = String(a).toLowerCase(), t = String(b).toLowerCase();
+    return s < t ? -1 : s > t ? 1 : 0;
+  }
+  function fxRound(x, places, mode) {
+    const f = Math.pow(10, Math.trunc(places));
+    const s = Math.sign(x), m = Math.abs(x) * f;
+    const r = mode === 'up' ? Math.ceil(m - 1e-9) : mode === 'down' ? Math.floor(m + 1e-9) : Math.round(m + 1e-9);
+    return s * r / f;
+  }
+  function fxEval(n, cx) {
+    switch (n.t) {
+      case 'lit': return n.v;
+      case 'neg': return -fxNum(fxEval(n.a, cx), n);
+      case 'not': return !fxTruthy(fxEval(n.a, cx));
+      case 'in': { const v = fxEval(n.a, cx); const hit = n.list.some(x => fxEq(v, fxEval(x, cx))); return n.neg ? !hit : hit; }
+      case 'bin': return fxBinary(n, cx);
+      case 'path': return fxPathValue(n, cx);
+      case 'call': return n.agg ? fxAggregate(n, cx) : fxCallValue(n, cx);
+    }
+    throw new FxError('This formula could not be evaluated', n.at);
+  }
+  function fxBinary(n, cx) {
+    if (n.op === 'AND') return fxTruthy(fxEval(n.a, cx)) && fxTruthy(fxEval(n.b, cx));
+    if (n.op === 'OR') return fxTruthy(fxEval(n.a, cx)) || fxTruthy(fxEval(n.b, cx));
+    const a = fxEval(n.a, cx), b = fxEval(n.b, cx);
+    const isText = v => typeof v === 'string' && !isIsoDate(v) && v.trim() !== '' && isNaN(Number(v));
+    switch (n.op) {
+      case '=': return fxEq(a, b);
+      case '<>': return !fxEq(a, b);
+      // Ordering with a blank never matches, so "due < TODAY()" is false while due is empty.
+      case '<': return !fxBlank(a) && !fxBlank(b) && fxCmp(a, b) < 0;
+      case '>': return !fxBlank(a) && !fxBlank(b) && fxCmp(a, b) > 0;
+      case '<=': return !fxBlank(a) && !fxBlank(b) && fxCmp(a, b) <= 0;
+      case '>=': return !fxBlank(a) && !fxBlank(b) && fxCmp(a, b) >= 0;
+      case '&': return fxStr(a) + fxStr(b);
+      case '+': case '-': {
+        const [ta, tb] = n.types || [];
+        if ((ta === 'date' && fxBlank(a)) || (tb === 'date' && fxBlank(b))) return null;
+        if (isIsoDate(a) && isIsoDate(b)) return n.op === '-' ? daysBetween(b, a) : fxNum(a, n.a);
+        if (isIsoDate(a)) return addDays(a, (n.op === '-' ? -1 : 1) * fxNum(b, n.b));
+        if (isIsoDate(b) && n.op === '+') return addDays(b, fxNum(a, n.a));
+        if (n.op === '+' && (isText(a) || isText(b))) return fxStr(a) + fxStr(b);
+        return n.op === '+' ? fxNum(a, n.a) + fxNum(b, n.b) : fxNum(a, n.a) - fxNum(b, n.b);
+      }
+      case '*': return fxNum(a, n.a) * fxNum(b, n.b);
+      case '/': { const d = fxNum(b, n.b); return d === 0 ? null : fxNum(a, n.a) / d; }
+      case '^': return Math.pow(fxNum(a, n.a), fxNum(b, n.b));
+    }
+    throw new FxError(`Unknown operator "${n.op}"`, n.at);
+  }
+  function fxPathValue(n, cx) {
+    const [head, ...rest] = n.parts;
+    const low = head.toLowerCase();
+    let row, table, parts;
+    if (low === 'this') {
+      row = cx.thisRow; table = cx.thisTable; parts = rest;
+      if (!parts.length) return row ? row.id ?? null : null;
+    } else if (low === 'settings') {
+      const s = cx.settings || (S.data ? S.data.settings : settingsDefaults());
+      return s[rest[0]] ?? null;
+    } else if (low === 'before') {
+      row = cx.before; table = cx.table; parts = rest;
+    } else {
+      row = cx.row; table = cx.table; parts = n.parts;
+    }
+    if (cx.raw) return row && parts.length === 1 ? row[parts[0]] ?? null : null;
+    for (let i = 0; i < parts.length; i++) {
+      if (!row) return null;
+      const key = parts[i];
+      const v = key === 'id' ? row.id : rawValue(table, row, key);
+      if (i === parts.length - 1) return v === undefined ? null : v;
+      table = colDef(table, key).table;
+      row = v ? rowById(table, v) : null;
+    }
+    return null;
+  }
+  function fxAggregate(n, cx) {
+    let rows = tableRows(n.table);
+    if (n.where) rows = rows.filter(r => fxTruthy(fxEval(n.where, { table: n.table, row: r, thisTable: cx.thisTable, thisRow: cx.thisRow })));
+    const val = r => (n.field === 'id' ? r.id : rawValue(n.table, r, n.field));
+    if (n.fn === 'COUNT') return n.field ? rows.filter(r => !fxBlank(val(r))).length : rows.length;
+    if (n.fn === 'NEXTREF') {
+      const prefix = fxStr(fxEval(n.args[1], cx)), width = fxNum(fxEval(n.args[2], cx), n.args[2]);
+      const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$');
+      let max = 0;
+      for (const r of rows) { const m = re.exec(String(val(r) ?? '')); if (m) max = Math.max(max, +m[1]); }
+      return prefix + String(max + 1).padStart(width, '0');
+    }
+    const vals = rows.map(val).filter(v => !fxBlank(v));
+    if (n.fn === 'SUM') return vals.reduce((s, v) => s + fxNum(v, n), 0);
+    if (!vals.length) return null;
+    if (n.fn === 'AVERAGE') return vals.reduce((s, v) => s + fxNum(v, n), 0) / vals.length;
+    return vals.reduce((m, v) => ((n.fn === 'MIN' ? fxCmp(v, m) < 0 : fxCmp(v, m) > 0) ? v : m));
+  }
+  function fxCallValue(n, cx) {
+    const A = n.args;
+    const ev = i => fxEval(A[i], cx);
+    switch (n.fn) {
+      case 'IF': return fxTruthy(ev(0)) ? ev(1) : A.length > 2 ? ev(2) : null;
+      case 'IFS': for (let i = 0; i + 1 < A.length; i += 2) if (fxTruthy(ev(i))) return ev(i + 1); return null;
+      case 'SWITCH': {
+        const v = ev(0);
+        let i = 1;
+        for (; i + 1 < A.length; i += 2) if (fxEq(v, ev(i))) return ev(i + 1);
+        return i < A.length ? ev(i) : null;
+      }
+      case 'AND': return A.every((_, i) => fxTruthy(ev(i)));
+      case 'OR': return A.some((_, i) => fxTruthy(ev(i)));
+      case 'NOT': return !fxTruthy(ev(0));
+      case 'ISBLANK': return fxBlank(ev(0));
+      case 'IFBLANK': { const v = ev(0); return fxBlank(v) ? ev(1) : v; }
+      case 'COALESCE': for (let i = 0; i < A.length; i++) { const v = ev(i); if (!fxBlank(v)) return v; } return null;
+      case 'BLANK': return null;
+      case 'TODAY': return todayISO();
+      case 'USER': return currentUser() || '';
+    }
+    const v = A.map((_, i) => ev(i));
+    const num = i => fxNum(v[i], A[i]);
+    const present = v.filter(x => !fxBlank(x));
+    const date = i => (fxBlank(v[i]) ? null : parseDate(v[i]));
+    switch (n.fn) {
+      case 'ROUND': return fxRound(num(0), A.length > 1 ? num(1) : 0);
+      case 'ROUNDUP': return fxRound(num(0), A.length > 1 ? num(1) : 0, 'up');
+      case 'ROUNDDOWN': return fxRound(num(0), A.length > 1 ? num(1) : 0, 'down');
+      case 'ABS': return Math.abs(num(0));
+      case 'SQRT': { const x = num(0); if (x < 0) throw new FxError('SQRT of a negative number', n.at); return Math.sqrt(x); }
+      case 'POWER': return Math.pow(num(0), num(1));
+      case 'MOD': { const d = num(1); return d === 0 ? null : num(0) - d * Math.floor(num(0) / d); }
+      case 'INT': return Math.floor(num(0));
+      case 'CEILING': case 'FLOOR': {
+        const sig = A.length > 1 ? num(1) : 1;
+        if (!sig) return null;
+        return (n.fn === 'CEILING' ? Math.ceil(num(0) / sig - 1e-9) : Math.floor(num(0) / sig + 1e-9)) * sig;
+      }
+      case 'SUM': return v.reduce((s, x, i) => s + fxNum(x, A[i]), 0);
+      case 'AVERAGE': return present.length ? present.reduce((s, x) => s + fxNum(x, n), 0) / present.length : null;
+      case 'MIN': case 'MAX': return present.length ? present.reduce((m, x) => ((n.fn === 'MIN' ? fxCmp(x, m) < 0 : fxCmp(x, m) > 0) ? x : m)) : null;
+      case 'CONCAT': return v.map(fxStr).join('');
+      case 'LEN': return fxStr(v[0]).length;
+      case 'UPPER': return fxStr(v[0]).toUpperCase();
+      case 'LOWER': return fxStr(v[0]).toLowerCase();
+      case 'TRIM': return fxStr(v[0]).trim();
+      case 'LEFT': return fxStr(v[0]).slice(0, A.length > 1 ? num(1) : 1);
+      case 'RIGHT': { const s = fxStr(v[0]), k = A.length > 1 ? num(1) : 1; return k > 0 ? s.slice(-k) : ''; }
+      case 'CONTAINS': return fxStr(v[0]).toLowerCase().includes(fxStr(v[1]).toLowerCase());
+      case 'VALUE': { if (fxBlank(v[0])) return null; const x = Number(String(v[0]).replace(/[^0-9.eE+-]/g, '')); return isNaN(x) ? null : x; }
+      case 'DAYS': return fxBlank(v[0]) || fxBlank(v[1]) ? null : daysBetween(v[1], v[0]);
+      case 'YEARFRAC': return fxBlank(v[0]) || fxBlank(v[1]) ? null : yearsBetween(v[0], v[1]);
+      case 'EDATE': return fxBlank(v[0]) ? null : addMonths(v[0], Math.trunc(num(1)));
+      case 'ADDDAYS': return fxBlank(v[0]) ? null : addDays(v[0], Math.trunc(num(1)));
+      case 'YEAR': { const d = date(0); return d ? d.getFullYear() : null; }
+      case 'MONTH': { const d = date(0); return d ? d.getMonth() + 1 : null; }
+      case 'DAY': { const d = date(0); return d ? d.getDate() : null; }
+      case 'DATE': { const d = new Date(num(0), num(1) - 1, num(2)); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+    }
+    throw new FxError(`${n.fn}() is not available`, n.at);
+  }
+  // Parse and check in one step. Returns the checked AST; throws FxError.
+  function fxCompile(src, sc) {
+    const ast = fxParse(src);
+    fxCheck(ast, sc);
+    return ast;
+  }
+  // Point at the problem in a formula for error messages.
+  function fxWhere(src, e) {
+    const s = String(src);
+    const at = typeof e.at === 'number' ? e.at : -1;
+    if (at < 0 || s.length <= 60) return `"${s}"`;
+    const from = Math.max(0, at - 25), to = Math.min(s.length, at + 25);
+    return `"${from > 0 ? '…' : ''}${s.slice(from, to)}${to < s.length ? '…' : ''}"`;
+  }
+
+  // ── Tool definitions (JSON) ────────────────────────────────────────────
+  // A tool can be defined by JSON in <script id="ca-spec"> instead of JavaScript. This is the
+  // no-code route: Copilot writes the JSON, the tool builder checks it and names every problem.
+  // text -> parseLoose -> specNormalise (tidy common variations) -> specCheck -> specCompile,
+  // which produces the same definition object that Carryall.app() takes.
+
+  // Lenient JSON: also accepts comments, trailing commas, single-quoted text and unquoted keys,
+  // ignores anything before the first "{" (such as a code fence) and after the matching "}".
+  function parseLoose(text) {
+    const src = String(text || '');
+    let i = src.indexOf('{');
+    const fail = (m, at = i) => {
+      const pre = src.slice(0, at);
+      const line = pre.split('\n').length, col = at - pre.lastIndexOf('\n');
+      const e = new Error(`${m} (line ${line}, column ${col}).`);
+      e.line = line; e.col = col;
+      throw e;
+    };
+    if (i < 0) {
+      const e = new Error(src.trim() ? 'No tool definition found. It is JSON that starts with { and ends with }.' : 'Paste a tool definition first.');
+      throw e;
+    }
+    const ws = () => {
+      for (;;) {
+        while (i < src.length && /\s/.test(src[i])) i++;
+        if (src.startsWith('//', i)) { while (i < src.length && src[i] !== '\n') i++; }
+        else if (src.startsWith('/*', i)) { const e = src.indexOf('*/', i + 2); if (e < 0) fail('A /* comment is not closed'); i = e + 2; }
+        else return;
+      }
+    };
+    const OPEN = { '"': '"', "'": "'", '“': '”', '‘': '’' };
+    function str() {
+      const start = i, close = OPEN[src[i++]];
+      let s = '';
+      while (i < src.length) {
+        const c = src[i++];
+        if (c === close) return s;
+        if (c === '\\') {
+          const e = src[i++];
+          if (e === 'u') { s += String.fromCharCode(parseInt(src.slice(i, i + 4), 16)); i += 4; }
+          else s += { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f' }[e] ?? e;
+        } else if (c === '\n') fail('A piece of text runs past the end of its line. Check for a missing closing quote', start);
+        else s += c;
+      }
+      fail('A piece of text is missing its closing quote', start);
+    }
+    function value() {
+      ws();
+      const c = src[i];
+      if (c === '{') return obj();
+      if (c === '[') return arr();
+      if (OPEN[c]) return str();
+      const num = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(src.slice(i, i + 40));
+      if (num) { i += num[0].length; return Number(num[0]); }
+      const word = /^[A-Za-z_$][\w$]*/.exec(src.slice(i, i + 40));
+      if (word) {
+        const w = word[0];
+        if (w === 'true' || w === 'false' || w === 'null') { i += w.length; return w === 'true' ? true : w === 'false' ? false : null; }
+        if (w === 'function' || /^\s*\([^)]*\)\s*=>|^\w+\s*=>/.test(src.slice(i, i + 60))) fail('This looks like JavaScript, not JSON. In a tool definition, calculations are formulas in quotes, such as "formula": "quantity * rate"');
+        fail(`Unexpected word "${w}". Text values need double quotes, for example "${w}"`);
+      }
+      if (c === undefined) fail('The definition ends too early. Check that every { and [ has a matching } and ]');
+      if (c === '(' || (c === '=' && src[i + 1] === '>')) fail('This looks like JavaScript, not JSON. In a tool definition, calculations are formulas in quotes, such as "formula": "quantity * rate"');
+      fail(`Unexpected "${c}"`);
+    }
+    function obj() {
+      i++;
+      const o = {};
+      for (;;) {
+        ws();
+        if (src[i] === '}') { i++; return o; }
+        let k;
+        if (OPEN[src[i]]) k = str();
+        else {
+          const m = /^[A-Za-z_$][\w$-]*/.exec(src.slice(i, i + 80));
+          if (!m) fail(src[i] === undefined ? 'The definition ends too early. Check that every { has a matching }' : `Expected a property name in double quotes but found "${src[i]}"`);
+          k = m[0]; i += k.length;
+        }
+        ws();
+        if (src[i] !== ':') fail(`Expected ":" after "${k}"`);
+        i++;
+        o[k] = value();
+        ws();
+        if (src[i] === ',') { i++; continue; }
+        if (src[i] === '}') { i++; return o; }
+        fail(src[i] === undefined ? 'The definition ends too early. Check that every { has a matching }' : `Expected "," or "}" after the value of "${k}". Check for a missing comma`);
+      }
+    }
+    function arr() {
+      i++;
+      const a = [];
+      for (;;) {
+        ws();
+        if (src[i] === ']') { i++; return a; }
+        a.push(value());
+        ws();
+        if (src[i] === ',') { i++; continue; }
+        if (src[i] === ']') { i++; return a; }
+        fail(src[i] === undefined ? 'The definition ends too early. Check that every [ has a matching ]' : 'Expected "," or "]" in a list. Check for a missing comma');
+      }
+    }
+    return value();
+  }
+
+  // Readable JSON: short objects and lists stay on one line.
+  const inlineJson = v => (v === null || typeof v !== 'object' ? JSON.stringify(v)
+    : Array.isArray(v) ? '[' + v.map(inlineJson).join(', ') + ']'
+    : Object.keys(v).length ? '{ ' + Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => JSON.stringify(k) + ': ' + inlineJson(x)).join(', ') + ' }' : '{}');
+  function prettyJson(v, escapeHtml = false, indent = '') {
+    const one = inlineJson(v);
+    let out;
+    if (v === null || typeof v !== 'object' || one.length + indent.length <= 100) out = one;
+    else {
+      const inner = indent + '  ';
+      out = Array.isArray(v)
+        ? '[\n' + v.map(x => inner + prettyJson(x, false, inner)).join(',\n') + '\n' + indent + ']'
+        : '{\n' + Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => inner + JSON.stringify(k) + ': ' + prettyJson(x, false, inner)).join(',\n') + '\n' + indent + '}';
+    }
+    return escapeHtml ? out.replace(/</g, '\\u003c') : out;
+  }
+
+  const PILL_COLOURS = ['grey', 'green', 'amber', 'red', 'blue', 'purple', 'teal', 'pink'];
+  const FORMATS = ['number', 'integer', 'currency', 'percent', 'date', 'text', 'boolean'];
+  const ID_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
+  const TYPE_ALIASES = {
+    string: 'text', str: 'text', varchar: 'text', shorttext: 'text', textarea: 'longtext', multiline: 'longtext', memo: 'longtext',
+    note: 'longtext', notes: 'longtext', paragraph: 'longtext', richtext: 'longtext', int: 'number', integer: 'number', float: 'number',
+    decimal: 'number', double: 'number', numeric: 'number', num: 'number', money: 'currency', price: 'currency', percentage: 'percent',
+    pct: 'percent', datetime: 'date', timestamp: 'date', bool: 'boolean', checkbox: 'boolean', yesno: 'boolean', select: 'choice',
+    enum: 'choice', dropdown: 'choice', list: 'choice', option: 'choice', options: 'choice', lookup: 'ref', link: 'ref',
+    reference: 'ref', relation: 'ref', foreignkey: 'ref', fk: 'ref', formula: 'computed', calculated: 'computed', calc: 'computed',
+    calculation: 'computed', derived: 'computed',
+  };
+  const VIEW_ALIASES = {
+    list: 'table', grid: 'table', datagrid: 'table', records: 'table', chart: 'summary', group: 'summary', groupby: 'summary',
+    breakdown: 'summary', kpis: 'kpi', stats: 'kpi', cards: 'kpi', figures: 'kpi', overview: 'dashboard', home: 'dashboard',
+    config: 'settings', preferences: 'settings', report: 'sheet', print: 'sheet', printable: 'sheet', detail: 'sheet',
+    crosstab: 'matrix', pivot: 'matrix',
+  };
+  const TOP_KEYS = ['id', 'name', 'description', 'version', 'schemaVersion', 'locale', 'currency', 'home', 'versionUrl', 'identity',
+    'fileName', 'saveInPlace', 'properties', 'settings', 'tables', 'views', 'seed', 'migrations', 'tests'];
+  const TABLE_KEYS = ['id', 'label', 'singular', 'description', 'display', 'displayFormula', 'columns', 'checks', 'onSave', 'readOnly'];
+  const COL_COMMON = ['id', 'label', 'type', 'required', 'unique', 'help', 'hidden', 'hideInForm', 'mono', 'default', 'defaultFormula'];
+  const COL_BY_TYPE = {
+    text: ['maxLength'], longtext: [], number: ['min', 'max', 'decimals', 'step'], currency: ['min', 'max', 'currency', 'step'],
+    percent: ['min', 'max', 'decimals', 'step'], date: [], boolean: ['checkLabel'], choice: ['options', 'colors'],
+    ref: ['table', 'display'], computed: ['formula', 'format', 'decimals', 'currency', 'colors', 'colorFormula'],
+  };
+  const ALL_COL_KEYS = [...new Set([...COL_COMMON, ...Object.values(COL_BY_TYPE).flat()])];
+  const VIEW_KEYS = {
+    table: ['table', 'columns', 'sort', 'totals', 'filters', 'where', 'add', 'readOnly', 'preset', 'search'],
+    summary: ['table', 'groupBy', 'bucket', 'metrics', 'chart', 'showTable', 'where', 'sortBy'],
+    kpi: ['items'], dashboard: ['blocks'], settings: ['fields', 'intro'],
+    sheet: ['table', 'fields', 'sort', 'where', 'child'],
+    matrix: ['table', 'rows', 'columns', 'metrics', 'where'],
+  };
+  const STEP_OPS = {
+    renameField: [['table', 'from', 'to'], []], removeField: [['table', 'field'], []],
+    setField: [['table', 'field'], ['value', 'formula', 'when']], renameTable: [['from', 'to'], []],
+    textToRef: [['table', 'field', 'to', 'target', 'match'], ['blankValue']], mapValues: [['table', 'field', 'map'], []],
+  };
+  const KEY_HINTS = {
+    choices: 'Use "options" for the list of choices.', values: 'Use "options" for the list of choices.',
+    fn: 'Use "formula" with a formula in quotes, such as "quantity * rate".', expression: 'Use "formula".', calc: 'Use "formula".',
+    fields: 'Use "columns".', onNew: 'Put starting rows in "seed": { "tableId": [ { ... } ] }.', fixtures: 'Use "tests".',
+    validate: 'Use "checks": [ { "errorIf": "formula", "message": "What to do" } ].',
+    validation: 'Use "checks": [ { "errorIf": "formula", "message": "What to do" } ].',
+    render: 'Custom JavaScript views are not possible in a tool definition. Use a sheet, matrix, summary or dashboard view.',
+    references: 'Use "table" for the table a link points to.', refTable: 'Use "table" for the table a link points to.',
+    defaultValue: 'Use "default".', condition: 'Use "where" for a filter, or "errorIf" in checks.',
+  };
+  const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  const toCamel = s => String(s).replace(/[^A-Za-z0-9]+(.)?/g, (_, c) => (c ? c.toUpperCase() : '')).replace(/^[^A-Za-z]+/, '').replace(/^./, c => c.toLowerCase()) || 'name';
+  const toKebab = s => String(s).replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'my-tool';
+
+  function specNormalise(raw) {
+    const notes = [];
+    const fixed = (where, message) => notes.push({ level: 'fixed', where, message });
+    if (!isObj(raw)) throw new Error('A tool definition is one JSON object that starts with { and ends with }.');
+    for (const k of ['tool', 'app', 'definition', 'spec']) {
+      if (isObj(raw[k]) && raw[k].tables && !raw.tables) {
+        const inner = specNormalise(raw[k]);
+        inner.notes.unshift({ level: 'fixed', where: 'definition', message: `Used the definition inside "${k}"` });
+        return inner;
+      }
+    }
+    const spec = clone(raw);
+    const rename = (o, from, to, where) => {
+      if (isObj(o) && from in o && !(to in o)) {
+        const entries = Object.entries(o).map(([k, v]) => [k === from ? to : k, v]);
+        for (const k of Object.keys(o)) delete o[k];
+        Object.assign(o, Object.fromEntries(entries));
+        fixed(where, `Renamed "${from}" to "${to}"`);
+      }
+    };
+    const toList = (x, what, where) => {
+      if (!isObj(x)) return x;
+      if (what === 'column' && Array.isArray(x.columns)) return x;
+      fixed(where, `Changed ${what === 'column' ? 'columns' : what + 's'} from an object to a list`);
+      return Object.entries(x).map(([k, v]) => (isObj(v) ? { id: k, ...v } : what === 'column' && typeof v === 'string' ? { id: k, type: v } : { id: k, value: v }));
+    };
+    rename(spec, 'title', 'name', 'definition');
+    rename(spec, 'fixtures', 'tests', 'definition');
+    rename(spec, 'schema_version', 'schemaVersion', 'definition');
+    if (typeof spec.schemaVersion === 'string' && /^\d+$/.test(spec.schemaVersion)) { spec.schemaVersion = +spec.schemaVersion; fixed('schemaVersion', 'Changed schemaVersion from text to a number'); }
+    if (typeof spec.version === 'number') { spec.version = String(spec.version).includes('.') ? `${spec.version}.0` : `${spec.version}.0.0`; fixed('version', 'Changed version to text such as "1.0.0"'); }
+    for (const k of ['seedData', 'initialData', 'sampleData', 'startingRows']) rename(spec, k, 'seed', 'definition');
+
+    const normCol = (c, where) => {
+      if (!isObj(c)) return c;
+      if (!c.id && typeof c.key === 'string') rename(c, 'key', 'id', where);
+      if (!c.id && typeof c.name === 'string') { rename(c, 'name', 'id', where); }
+      else if (c.id && typeof c.name === 'string' && !c.label) rename(c, 'name', 'label', where);
+      where = where.replace(/"#\d+"$/, `"${c.id}"`);
+      if (typeof c.type === 'string') {
+        const t = c.type.trim().toLowerCase().replace(/[\s_-]/g, '');
+        const to = COLUMN_TYPES.includes(t) ? t : TYPE_ALIASES[t];
+        if (to && to !== c.type) { if (to !== c.type.toLowerCase()) fixed(where, `Changed type "${c.type}" to "${to}"`); c.type = to; }
+      }
+      for (const k of ['choices', 'values', 'enum', 'items', 'list']) if (Array.isArray(c[k])) rename(c, k, 'options', where);
+      for (const k of ['fn', 'expression', 'calc', 'calculation', 'compute', 'formulae', 'expr']) if (typeof c[k] === 'string') rename(c, k, 'formula', where);
+      for (const k of ['refTable', 'references', 'target', 'targetTable', 'linkTo', 'lookup', 'ref', 'foreignTable']) if (typeof c[k] === 'string') rename(c, k, 'table', where);
+      rename(c, 'defaultValue', 'default', where);
+      rename(c, 'description', 'help', where);
+      rename(c, 'isRequired', 'required', where);
+      if (!c.type && typeof c.formula === 'string') { c.type = 'computed'; fixed(where, 'Set type to "computed" because the column has a formula'); }
+      if (typeof c.formula === 'string' && /^\s*=/.test(c.formula)) { c.formula = c.formula.replace(/^\s*=\s*/, ''); fixed(where, 'Removed the "=" at the start of the formula'); }
+      if (typeof c.default === 'string' && /^\s*=/.test(c.default) && !('defaultFormula' in c)) { c.defaultFormula = c.default.replace(/^\s*=\s*/, ''); delete c.default; fixed(where, 'Moved the "=" default to "defaultFormula"'); }
+      return c;
+    };
+    spec.tables = toList(spec.tables, 'table', 'tables');
+    if (Array.isArray(spec.tables)) spec.tables.forEach((t, i) => {
+      if (!isObj(t)) return;
+      const where = `table "${t.id || '#' + (i + 1)}"`;
+      if (!t.id && typeof t.key === 'string') rename(t, 'key', 'id', where);
+      if (!t.id && typeof t.name === 'string' && ID_RE.test(t.name)) rename(t, 'name', 'id', where);
+      else if (typeof t.name === 'string' && !t.label) rename(t, 'name', 'label', where);
+      rename(t, 'fields', 'columns', where);
+      rename(t, 'displayColumn', 'display', where);
+      rename(t, 'validations', 'checks', where);
+      t.columns = toList(t.columns, 'column', where);
+      if (Array.isArray(t.columns)) t.columns.forEach((c, j) => normCol(c, `${where} › column "${(isObj(c) && (c.id || c.name || c.key)) || '#' + (j + 1)}"`));
+    });
+    if (isObj(spec.settings)) {
+      if (Array.isArray(spec.settings.fields)) {
+        const defaults = isObj(spec.settings.defaults) ? spec.settings.defaults : {};
+        spec.settings = spec.settings.fields.map(f => (isObj(f) && f.default === undefined && f.id in defaults ? { ...f, default: defaults[f.id] } : f));
+        fixed('settings', 'Changed settings to a list of fields with their defaults');
+      } else if (isObj(spec.settings.columns) || Array.isArray(spec.settings.columns)) {
+        spec.settings = Array.isArray(spec.settings.columns) ? spec.settings.columns : toList(spec.settings.columns, 'column', 'settings');
+      } else spec.settings = toList(spec.settings, 'column', 'settings');
+    }
+    if (Array.isArray(spec.settings)) spec.settings.forEach((c, j) => normCol(c, `setting "${(isObj(c) && (c.id || c.name)) || '#' + (j + 1)}"`));
+
+    const normSort = (o, where) => {
+      if (!isObj(o)) return;
+      for (const k of ['sortBy', 'orderBy', 'order']) if (o.type !== 'summary' || k !== 'sortBy') rename(o, k, 'sort', where);
+      if (typeof o.sort === 'string') { const d = o.sort.startsWith('-'); o.sort = { column: o.sort.replace(/^-/, ''), dir: d ? 'desc' : 'asc' }; fixed(where, 'Changed sort to { "column", "dir" }'); }
+      if (isObj(o.sort)) { for (const k of ['key', 'field', 'by']) rename(o.sort, k, 'column', where); for (const k of ['direction', 'order']) rename(o.sort, k, 'dir', where); if (typeof o.sort.dir === 'string') o.sort.dir = o.sort.dir.toLowerCase().startsWith('desc') ? 'desc' : 'asc'; }
+    };
+    const normMetrics = (list, where) => {
+      if (!Array.isArray(list)) return;
+      for (const m of list) {
+        if (!isObj(m)) continue;
+        for (const k of ['field', 'key']) rename(m, k, 'column', where);
+        rename(m, 'name', 'label', where);
+        for (const k of ['fn', 'function', 'aggregate', 'agg']) rename(m, k, 'op', where);
+        if (typeof m.op === 'string') {
+          const op = { average: 'avg', mean: 'avg', total: 'sum', minimum: 'min', maximum: 'max' }[m.op.toLowerCase()] || m.op.toLowerCase();
+          if (op !== m.op) { fixed(where, `Changed metric op "${m.op}" to "${op}"`); m.op = op; }
+        }
+      }
+    };
+    const normView = (v, where) => {
+      if (!isObj(v)) return v;
+      for (const k of ['name', 'label', 'heading']) rename(v, k, 'title', where);
+      if (typeof v.type === 'string') {
+        const t = v.type.trim().toLowerCase().replace(/[\s_-]/g, '');
+        const to = VIEW_KEYS[t] ? t : VIEW_ALIASES[t];
+        if (to && to !== v.type) { if (to !== t) fixed(where, `Changed view type "${v.type}" to "${to}"`); v.type = to; }
+      }
+      normSort(v, where);
+      for (const k of ['filter', 'condition']) if (typeof v[k] === 'string') rename(v, k, 'where', where);
+      if (v.type === 'summary') for (const k of ['group', 'groupby', 'groupedBy', 'by']) rename(v, k, 'groupBy', where);
+      normMetrics(v.metrics, where);
+      if (v.type === 'kpi') {
+        for (const k of ['metrics', 'kpis', 'cards']) rename(v, k, 'items', where);
+        if (Array.isArray(v.items)) for (const it of v.items) if (isObj(it)) { for (const k of ['value', 'expression', 'calc']) if (typeof it[k] === 'string') rename(it, k, 'formula', where); rename(it, 'title', 'label', where); rename(it, 'name', 'label', where); }
+      }
+      if (v.type === 'dashboard') {
+        for (const k of ['views', 'widgets', 'items', 'children', 'sections']) rename(v, k, 'blocks', where);
+        if (Array.isArray(v.blocks)) v.blocks = v.blocks.map((b, j) => normView(b, `${where} › block ${j + 1}`));
+      }
+      if (v.type === 'sheet' && isObj(v.child)) { normSort(v.child, where); for (const k of ['linkColumn', 'via', 'parent', 'ref']) rename(v.child, k, 'link', where); }
+      return v;
+    };
+    if (isObj(spec.views)) { spec.views = Object.entries(spec.views).map(([k, v]) => (isObj(v) ? { title: k, ...v } : v)); fixed('views', 'Changed views from an object to a list'); }
+    if (Array.isArray(spec.views)) spec.views = spec.views.map((v, i) => normView(v, `view "${(isObj(v) && (v.title || v.name)) || '#' + (i + 1)}"`));
+
+    if (Array.isArray(spec.seed)) {
+      if (spec.seed.every(s => isObj(s) && typeof s.table === 'string' && Array.isArray(s.rows))) {
+        spec.seed = Object.fromEntries(spec.seed.map(s => [s.table, s.rows]));
+        fixed('seed', 'Changed seed to { "tableId": [rows] }');
+      }
+    }
+    if (isObj(spec.seed) && isObj(spec.seed.tables)) { spec.seed = spec.seed.tables; fixed('seed', 'Used the tables inside seed'); }
+    if (isObj(spec.migrations)) {
+      spec.migrations = Object.entries(spec.migrations).map(([k, v]) => ({ to: +k, ...(Array.isArray(v) ? { steps: v } : isObj(v) ? v : {}) }));
+      fixed('migrations', 'Changed migrations to a list of { "to", "steps" }');
+    }
+    if (Array.isArray(spec.migrations)) for (const m of spec.migrations) {
+      if (!isObj(m)) continue;
+      for (const k of ['version', 'toVersion', 'schemaVersion']) rename(m, k, 'to', 'migrations');
+      if (Array.isArray(m.steps)) for (const s of m.steps) if (isObj(s)) for (const k of ['type', 'action', 'operation']) rename(s, k, 'op', 'migrations');
+    }
+    if (Array.isArray(spec.tests)) for (const t of spec.tests) {
+      if (!isObj(t)) continue;
+      if (!t.tables && isObj(t.data)) { t.tables = isObj(t.data.tables) ? t.data.tables : t.data; delete t.data; fixed(`test "${t.name}"`, 'Moved "data" to "tables"'); }
+      for (const k of ['expected', 'expects', 'assertions', 'checks']) rename(t, k, 'expect', `test "${t.name}"`);
+    }
+    return { spec, notes };
+  }
+
+  function specCheck(spec) {
+    const problems = [];
+    const err = (where, message) => problems.push({ level: 'error', where, message });
+    const warn = (where, message) => problems.push({ level: 'warning', where, message });
+    const sch = { tables: {}, settings: {} };
+    const keysOk = (o, allowed, where, hints = {}) => {
+      for (const k of Object.keys(o)) {
+        if (allowed.includes(k)) continue;
+        const hint = hints[k] || KEY_HINTS[k];
+        const best = closest(k, allowed);
+        err(where, `Unknown property "${k}".${hint ? ' ' + hint : best ? ` Did you mean "${best}"?` : ` Allowed here: ${allowed.join(', ')}.`}`);
+      }
+    };
+    const formula = (src, where, sc, label = 'a formula') => {
+      if (typeof src !== 'string' || !src.trim()) { err(where, `Add ${label} as text in quotes.`); return null; }
+      try { const ast = fxParse(src); return fxCheck(ast, { sch, ...sc }); }
+      catch (e) { if (!(e instanceof FxError)) throw e; err(where, `${e.message.replace(/\.?$/, '.')} Formula: ${fxWhere(src, e)}.`); return null; }
+    };
+    try {
+      if (!isObj(spec)) { err('definition', 'A tool definition is one JSON object.'); return { problems, sch }; }
+      keysOk(spec, TOP_KEYS, 'definition', { app: 'Put the tool\'s properties at the top level of the definition.' });
+
+      // Tool properties
+      if (typeof spec.id !== 'string' || !spec.id) err('id', 'Add an "id": lower case words joined by hyphens, for example "snagging-tracker". Never change it once the tool is in use.');
+      else if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(spec.id)) err('id', `"${spec.id}" is not a valid id. Use lower case letters and numbers joined by hyphens, for example "${toKebab(spec.id)}".`);
+      if (typeof spec.name !== 'string' || !spec.name.trim()) err('name', 'Add a "name": the tool\'s title, for example "Snagging tracker".');
+      if (spec.version == null) err('version', 'Add "version": "1.0.0". Increase it every time the tool changes.');
+      else if (typeof spec.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(spec.version)) err('version', `"version" must look like "1.0.0", not "${spec.version}".`);
+      if (!Number.isInteger(spec.schemaVersion) || spec.schemaVersion < 1) err('schemaVersion', 'Add "schemaVersion": 1. Increase it by 1 only when stored data changes shape, and add a migration.');
+      for (const k of ['description', 'locale', 'fileName']) if (spec[k] != null && typeof spec[k] !== 'string') err(k, `"${k}" must be text.`);
+      if (spec.currency != null && !/^[A-Z]{3}$/.test(spec.currency)) err('currency', 'Use a three-letter currency code, for example "GBP".');
+      for (const k of ['home', 'versionUrl']) if (spec[k] != null && (typeof spec[k] !== 'string' || /\s/.test(spec[k]))) err(k, `"${k}" must be a web address, or null.`);
+      if (spec.identity != null && spec.identity !== 'azure-swa') err('identity', 'Use "azure-swa" or leave "identity" out.');
+      if (spec.saveInPlace != null && typeof spec.saveInPlace !== 'boolean') err('saveInPlace', 'Use true or false.');
+      if (spec.properties != null && spec.properties !== false) {
+        if (!isObj(spec.properties)) err('properties', 'Use false, or { "required": ["projectNumber", "projectName"], "firstRevision": "P01" }.');
+        else {
+          keysOk(spec.properties, ['required', 'firstRevision'], 'properties');
+          if (spec.properties.required != null && !(Array.isArray(spec.properties.required) && spec.properties.required.every(x => ['projectNumber', 'projectName'].includes(x)))) err('properties', '"required" can list "projectNumber" and "projectName".');
+        }
+      }
+
+      // Columns (shared by tables and settings)
+      const refChecks = [];
+      const checkColumn = (c, where, kind) => {
+        if (!isObj(c)) { err(where, 'Each column is an object such as { "id": "title", "label": "Title", "type": "text" }.'); return false; }
+        if (typeof c.id !== 'string' || !c.id) { err(where, 'Add an "id": the column\'s key in the saved data, for example "title".'); return false; }
+        let ok = true;
+        if (c.id === 'id') { err(where, 'Every row already has an "id". Remove this column, or rename it, for example "reference".'); ok = false; }
+        else if (!ID_RE.test(c.id)) { err(where, `Column id "${c.id}" can only use letters, numbers and _, starting with a letter. Try "${toCamel(c.id)}".`); ok = false; }
+        else if (FX_RESERVED.includes(c.id.toLowerCase())) { err(where, `"${c.id}" is a reserved word in formulas. Choose another id, for example "${c.id}Value".`); ok = false; }
+        if (!COLUMN_TYPES.includes(c.type)) {
+          err(where, c.type == null ? `Add a "type": one of ${COLUMN_TYPES.join(', ')}.` : `Unknown type "${c.type}". Use one of ${COLUMN_TYPES.join(', ')}.`);
+          return false;
+        }
+        if (kind === 'settings' && (c.type === 'ref' || c.type === 'computed')) err(where, 'Settings cannot be links or calculated. Use text, number, currency, percent, date, choice or boolean.');
+        const allowed = COL_COMMON.concat(COL_BY_TYPE[c.type]);
+        for (const k of Object.keys(c)) {
+          if (allowed.includes(k)) continue;
+          if (ALL_COL_KEYS.includes(k)) warn(where, `"${k}" does not apply to a ${c.type} column, so it is ignored.`);
+          else { const hint = KEY_HINTS[k], best = closest(k, allowed); err(where, `Unknown property "${k}".${hint ? ' ' + hint : best ? ` Did you mean "${best}"?` : ''}`); }
+        }
+        for (const k of ['label', 'help']) if (c[k] != null && typeof c[k] !== 'string') err(where, `"${k}" must be text.`);
+        for (const k of ['required', 'unique', 'hidden', 'hideInForm', 'mono']) if (c[k] != null && typeof c[k] !== 'boolean') err(where, `"${k}" must be true or false, without quotes.`);
+        for (const k of ['min', 'max', 'step']) if (c[k] != null && typeof c[k] !== 'number') err(where, `"${k}" must be a number, without quotes.`);
+        if (c.decimals != null && !(Number.isInteger(c.decimals) && c.decimals >= 0 && c.decimals <= 10)) err(where, '"decimals" must be a whole number from 0 to 10.');
+        if (c.type === 'choice') {
+          if (!Array.isArray(c.options) || !c.options.length) err(where, 'Add "options": the list of choices, for example ["Open", "Closed"].');
+          else {
+            if (!c.options.every(o => typeof o === 'string' && o.trim())) err(where, 'Each option must be text in quotes.');
+            const dup = c.options.find((o, i) => c.options.indexOf(o) !== i);
+            if (dup != null) err(where, `The option "${dup}" is listed twice.`);
+          }
+        }
+        if (c.colors != null) {
+          if (!isObj(c.colors)) err(where, '"colors" maps values to colours, for example { "Open": "blue", "Closed": "green" }.');
+          else for (const [k, v] of Object.entries(c.colors)) {
+            if (!PILL_COLOURS.includes(v)) err(where, `"${v}" is not a colour. Use one of ${PILL_COLOURS.join(', ')}.`);
+            if (c.type === 'choice' && Array.isArray(c.options) && !c.options.includes(k)) warn(where, `"colors" has "${k}", which is not one of the options.`);
+          }
+        }
+        if (c.type === 'computed') {
+          if (c.formula == null) err(where, 'Add a "formula", for example "quantity * rate".');
+          if (c.format != null && !FORMATS.includes(c.format)) err(where, `Unknown format "${c.format}". Use one of ${FORMATS.join(', ')}.`);
+          if (c.required || c.unique || c.default !== undefined || c.defaultFormula) warn(where, 'Calculated columns are never typed in, so required, unique and default are ignored.');
+        }
+        if (c.type === 'ref') refChecks.push([c, where]);
+        if (c.default !== undefined && c.default !== null && c.type !== 'computed') {
+          const d = c.default;
+          const bad = NUMERIC.includes(c.type) ? typeof d !== 'number'
+            : c.type === 'date' ? !isIsoDate(d)
+            : c.type === 'boolean' ? typeof d !== 'boolean'
+            : c.type === 'choice' ? !(Array.isArray(c.options) && c.options.includes(d))
+            : typeof d !== 'string';
+          if (bad) {
+            if (typeof d === 'string' && /\(\s*\)|^[A-Z]+\(/.test(d)) err(where, `Use "defaultFormula" for a calculated default, for example "defaultFormula": "${d}".`);
+            else err(where, c.type === 'choice' ? `The default "${d}" is not one of the options.` : c.type === 'date' ? 'A date default must be written "YYYY-MM-DD". For today\'s date use "defaultFormula": "TODAY()".' : `The default does not suit a ${c.type} column.`);
+          }
+        }
+        return ok;
+      };
+
+      // Settings
+      if (spec.settings != null) {
+        if (!Array.isArray(spec.settings)) err('settings', 'Make "settings" a list of fields, written like table columns.');
+        else {
+          const seen = new Set();
+          spec.settings.forEach((c, i) => {
+            const where = `setting "${(isObj(c) && c.id) || '#' + (i + 1)}"`;
+            if (!checkColumn(c, where, 'settings')) return;
+            if (seen.has(c.id)) err(where, `The setting "${c.id}" is defined twice.`);
+            seen.add(c.id);
+            sch.settings[c.id] = { ...c };
+          });
+        }
+      }
+
+      // Tables and columns
+      if (!Array.isArray(spec.tables) || !spec.tables.length) err('tables', 'Add "tables": a list with at least one table, each with "id", "label", "singular" and "columns".');
+      const tables = Array.isArray(spec.tables) ? spec.tables.filter(isObj) : [];
+      tables.forEach((t, i) => {
+        const where = `table "${t.id || '#' + (i + 1)}"`;
+        keysOk(t, TABLE_KEYS, where, { rules: 'Use "checks" for validation, or "onSave" for values set automatically.' });
+        if (typeof t.id !== 'string' || !t.id) { err(where, 'Add an "id" for this table, for example "comments".'); return; }
+        let tid = t.id;
+        if (!ID_RE.test(t.id)) {
+          // Keep checking under the suggested id, so one round reports as much as possible.
+          tid = toCamel(t.id);
+          err(where, `Table id "${t.id}" can only use letters, numbers and _, starting with a letter. Use "${tid}" here and everywhere this table is named.`);
+        } else if (FX_RESERVED.includes(t.id.toLowerCase())) { err(where, `"${t.id}" is a reserved word. Choose another table id.`); return; }
+        if (sch.tables[tid]) { err(where, `The table "${tid}" is defined twice.`); return; }
+        if (!t.singular) warn(where, `Add "singular", the name for one row, for example "${String(t.label || t.id).replace(/s$/i, '').toLowerCase()}". Buttons use it, such as "Add ${String(t.label || t.id).replace(/s$/i, '').toLowerCase()}".`);
+        const td = sch.tables[tid] = { cols: {}, label: t.label || tid, id: tid };
+        if (!Array.isArray(t.columns) || !t.columns.length) { err(where, 'Add "columns": a list with at least one column.'); return; }
+        const lower = new Set();
+        t.columns.forEach((c, j) => {
+          const cw = `${where} › column "${(isObj(c) && c.id) || '#' + (j + 1)}"`;
+          if (!checkColumn(c, cw, 'table')) return;
+          if (lower.has(c.id.toLowerCase())) { err(cw, `The column "${c.id}" is defined twice in this table.`); return; }
+          lower.add(c.id.toLowerCase());
+          td.cols[c.id] = { ...c };
+        });
+      });
+      for (const [c, where] of refChecks) {
+        if (!sch.tables[c.table]) err(where, c.table ? unknownMsg(`table "${c.table}"`, c.table, Object.keys(sch.tables), 'A link column\'s "table" is the id of the table it points to.') : 'Add "table": the id of the table this column links to.');
+        else if (c.display != null && !sch.tables[c.table].cols[c.display]) err(where, unknownMsg(`display column "${c.display}" in table "${c.table}"`, c.display, Object.keys(sch.tables[c.table].cols)));
+      }
+
+      // Formulas: infer the types of calculated columns first, then check them properly.
+      const tid = t => (typeof t.id === 'string' ? (ID_RE.test(t.id) ? t.id : toCamel(t.id)) : null);
+      const computed = [];
+      for (const t of tables) if (sch.tables[tid(t)]) for (const c of Object.values(sch.tables[tid(t)].cols)) if (c.type === 'computed' && typeof c.formula === 'string') computed.push([tid(t), c]);
+      for (let pass = 0; pass < 3; pass++) for (const [tk, c] of computed) {
+        try { c._type = fxCheck(fxParse(c.formula), { sch, table: tk, thisTable: tk }).type; } catch { /* reported below */ }
+      }
+      const deps = {};
+      for (const [tk, c] of computed) {
+        const d = new Set();
+        formula(c.formula, `table "${tk}" › column "${c.id}" › formula`, { table: tk, thisTable: tk, deps: d });
+        deps[`${tk}.${c.id}`] = [...d].filter(k => sch.tables[tk].cols[k]?.type === 'computed').map(k => `${tk}.${k}`);
+      }
+      const state = {};
+      const visit = (node, trail) => {
+        if (state[node] === 2) return;
+        if (state[node] === 1) {
+          const loop = trail.slice(trail.indexOf(node)).concat(node).map(x => x.split('.')[1]);
+          err(`table "${node.split('.')[0]}" › column "${node.split('.')[1]}" › formula`, `Circular calculation: ${loop.map((x, k) => (k === 0 ? `"${x}"` : `uses "${x}"`)).join(', which ')}. A column cannot depend on itself.`);
+          state[node] = 2;
+          return;
+        }
+        state[node] = 1;
+        for (const n of deps[node] || []) visit(n, trail.concat(node));
+        state[node] = 2;
+      };
+      Object.keys(deps).forEach(k => visit(k, []));
+
+      for (const t of tables) {
+        const td = sch.tables[tid(t)];
+        if (!td) continue;
+        const where = `table "${t.id}"`;
+        const rowSc = { table: td.id, thisTable: td.id };
+        for (const c of Object.values(td.cols)) {
+          if (c.defaultFormula != null) formula(c.defaultFormula, `${where} › column "${c.id}" › defaultFormula`, {}, 'a default formula');
+          if (c.colorFormula != null) formula(c.colorFormula, `${where} › column "${c.id}" › colorFormula`, rowSc);
+        }
+        if (t.display != null) {
+          if (typeof t.display !== 'string' || !td.cols[t.display]) err(where, typeof t.display === 'string' && /[\s&(+'"]/.test(t.display) ? `"display" names one column. For a formula use "displayFormula": "${t.display}".` : unknownMsg(`display column "${t.display}"`, String(t.display), Object.keys(td.cols)));
+        }
+        if (t.displayFormula != null) formula(t.displayFormula, `${where} › displayFormula`, rowSc);
+        if (t.checks != null) {
+          if (!Array.isArray(t.checks)) err(where, '"checks" must be a list of { "errorIf", "message", "field" }.');
+          else t.checks.forEach((ch, j) => {
+            const cw = `${where} › check ${j + 1}`;
+            if (!isObj(ch)) { err(cw, 'Each check is { "errorIf": "formula", "message": "What to do", "field": "column" }.'); return; }
+            keysOk(ch, ['errorIf', 'message', 'field'], cw, { when: 'Use "errorIf": a formula that is true when the row is wrong.', if: 'Use "errorIf".', condition: 'Use "errorIf".', rule: 'Use "errorIf".' });
+            formula(ch.errorIf, `${cw} › errorIf`, rowSc, 'an "errorIf" formula');
+            if (typeof ch.message !== 'string' || !ch.message.trim()) err(cw, 'Add a "message" that says what to do, for example "Add the response before marking it responded."');
+            if (ch.field != null && (!td.cols[ch.field] || td.cols[ch.field].type === 'computed')) err(cw, unknownMsg(`field "${ch.field}"`, String(ch.field), Object.keys(td.cols).filter(k => td.cols[k].type !== 'computed')));
+          });
+        }
+        if (t.onSave != null) {
+          if (!Array.isArray(t.onSave)) err(where, '"onSave" must be a list of { "when", "field", "value" or "formula" }.');
+          else t.onSave.forEach((r, j) => {
+            const rw = `${where} › onSave ${j + 1}`;
+            if (!isObj(r)) { err(rw, 'Each onSave rule is { "when": "formula", "field": "column", "value": ... } or with "formula" instead of "value".'); return; }
+            keysOk(r, ['when', 'field', 'value', 'formula'], rw, { set: 'Use "field" for the column to set, and "value" or "formula".', if: 'Use "when".', condition: 'Use "when".' });
+            if (!td.cols[r.field] || td.cols[r.field].type === 'computed') err(rw, r.field == null ? 'Add "field": the column this rule sets.' : unknownMsg(`field "${r.field}"`, String(r.field), Object.keys(td.cols).filter(k => td.cols[k].type !== 'computed')));
+            if (('value' in r) === ('formula' in r)) err(rw, 'Give either "value" (a fixed value) or "formula" (calculated), not both.');
+            if (r.when != null) formula(r.when, `${rw} › when`, { ...rowSc, before: true });
+            if ('formula' in r) formula(r.formula, `${rw} › formula`, { ...rowSc, before: true });
+          });
+        }
+      }
+      for (const [k, c] of Object.entries(sch.settings)) if (c.defaultFormula != null) formula(c.defaultFormula, `setting "${k}" › defaultFormula`, {}, 'a default formula');
+
+      // Views
+      const isNum = info => ['number', 'any'].includes(info.type);
+      const checkView = (v, where, inDashboard) => {
+        if (!isObj(v)) { err(where, 'Each view is an object with a "type", such as { "type": "table", "title": "Items", "table": "items" }.'); return; }
+        const type = v.type;
+        if (!VIEW_KEYS[type]) {
+          if (S.viewTypes[type]) return; // a plugin's view: free-form
+          err(where, type == null ? 'Add a "type": table, summary, kpi, dashboard, settings, sheet or matrix.'
+            : type === 'custom' ? 'Custom views need JavaScript, which a tool definition cannot hold. Use a table, summary, kpi, dashboard, sheet or matrix view.'
+            : `Unknown view type "${type}". Use table, summary, kpi, dashboard, settings, sheet or matrix.`);
+          return;
+        }
+        keysOk(v, ['type', 'title', 'wide', ...VIEW_KEYS[type]], where);
+        if (!inDashboard && !v.title && !['table', 'summary'].includes(type)) warn(where, 'Add a "title": it is the name on the view\'s tab.');
+        let td = null;
+        if (['table', 'summary', 'sheet', 'matrix'].includes(type)) {
+          if (sch.tables[v.table]) td = sch.tables[v.table];
+          else err(where, v.table == null ? 'Add "table": the id of the table this view shows.' : unknownMsg(`table "${v.table}"`, String(v.table), Object.keys(sch.tables)));
+        }
+        const colOk = (key, what, t = td, tk = v.table, numeric = null) => {
+          if (!t) return false;
+          if (typeof key !== 'string' || !t.cols[key]) { err(where, key == null ? `Add ${what}.` : unknownMsg(`${what} "${key}" in table "${tk}"`, String(key), Object.keys(t.cols))); return false; }
+          if (numeric && !isNum(colInfo(t.cols[key]))) { err(where, `"${key}" is not a number column, so it cannot be ${numeric}.`); return false; }
+          return true;
+        };
+        const listOk = (list, what, numeric) => {
+          if (list == null) return;
+          if (!Array.isArray(list)) { err(where, `"${what}" must be a list of column ids.`); return; }
+          list.forEach(k => colOk(k, what === 'totals' ? 'totals column' : what === 'filters' ? 'filter column' : 'column', td, v.table, numeric));
+        };
+        const sortOk = (s, t, tk) => {
+          if (s == null) return;
+          if (!isObj(s)) { err(where, '"sort" is { "column": "id", "dir": "asc" or "desc" }.'); return; }
+          keysOk(s, ['column', 'dir'], `${where} › sort`);
+          colOk(s.column, 'sort column', t, tk);
+          if (s.dir != null && !['asc', 'desc'].includes(s.dir)) err(where, 'Sort "dir" must be "asc" or "desc".');
+        };
+        const metricsOk = (list, allowWhere) => {
+          if (list == null) return;
+          if (!Array.isArray(list) || !list.length) { err(where, '"metrics" is a list such as [ { "label": "Count", "op": "count" } ].'); return; }
+          list.forEach((m, j) => {
+            const mw = `${where} › metric ${j + 1}`;
+            if (!isObj(m)) { err(mw, 'Each metric is { "label", "op", "column" }.'); return; }
+            keysOk(m, ['label', 'op', 'column', 'format', ...(allowWhere ? ['where'] : [])], mw);
+            const op = m.op || 'count';
+            if (!['count', 'sum', 'avg', 'min', 'max'].includes(op)) err(mw, `Unknown op "${m.op}". Use count, sum, avg, min or max.`);
+            else if (op !== 'count') colOk(m.column, `a "column" for ${op}`, td, v.table, op === 'sum' || op === 'avg' ? `added up (${op})` : null);
+            if (m.format != null && !FORMATS.includes(m.format)) err(mw, `Unknown format "${m.format}".`);
+            if (allowWhere && m.where != null && td) formula(m.where, `${mw} › where`, { table: v.table, thisTable: v.table });
+          });
+        };
+        if (v.where != null && td) formula(v.where, `${where} › where`, { table: v.table, thisTable: v.table });
+        switch (type) {
+          case 'table':
+            listOk(v.columns, 'columns');
+            listOk(v.totals, 'totals', 'totalled');
+            listOk(v.filters, 'filters');
+            sortOk(v.sort, td, v.table);
+            if (v.preset != null) { if (!isObj(v.preset)) err(where, '"preset" is an object of column values for new rows.'); else Object.keys(v.preset).forEach(k => colOk(k, 'preset column')); }
+            for (const k of ['add', 'readOnly', 'search']) if (v[k] != null && typeof v[k] !== 'boolean') err(where, `"${k}" must be true or false.`);
+            break;
+          case 'summary':
+            if (colOk(v.groupBy, '"groupBy" (the column to group by)') && v.bucket != null) {
+              const info = colInfo(td.cols[v.groupBy]);
+              if (!['month', 'year'].includes(v.bucket)) err(where, '"bucket" must be "month" or "year".');
+              else if (info.type !== 'date') err(where, '"bucket" only works when grouping by a date column.');
+            }
+            metricsOk(v.metrics, false);
+            if (v.chart != null && v.chart !== false && !(Number.isInteger(v.chart) && v.chart >= 0 && v.chart < (Array.isArray(v.metrics) ? v.metrics.length : 1))) err(where, '"chart" is false, or the position of the metric to chart (0 for the first).');
+            if (v.sortBy != null && v.sortBy !== 'label') err(where, '"sortBy" can only be "label".');
+            break;
+          case 'kpi':
+            if (!Array.isArray(v.items) || !v.items.length) { err(where, 'Add "items": a list such as [ { "label": "Open", "formula": "COUNT(items WHERE status = \'Open\')", "format": "integer" } ].'); break; }
+            v.items.forEach((it, j) => {
+              const iw = `${where} › item ${j + 1}`;
+              if (!isObj(it)) { err(iw, 'Each item is { "label", "formula", "format" }.'); return; }
+              keysOk(it, ['label', 'formula', 'format', 'decimals'], iw);
+              if (typeof it.label !== 'string' || !it.label) err(iw, 'Add a "label".');
+              formula(it.formula, `${iw} › formula`, {});
+              if (it.format != null && !FORMATS.includes(it.format)) err(iw, `Unknown format "${it.format}". Use one of ${FORMATS.join(', ')}.`);
+            });
+            break;
+          case 'dashboard':
+            if (inDashboard) { err(where, 'A dashboard cannot contain another dashboard.'); break; }
+            if (!Array.isArray(v.blocks) || !v.blocks.length) { err(where, 'Add "blocks": a list of kpi, summary, table, sheet or matrix views.'); break; }
+            v.blocks.forEach((b, j) => checkView(b, `${where} › block ${j + 1}${isObj(b) && b.title ? ` "${b.title}"` : ''}`, true));
+            break;
+          case 'settings':
+            if (!Object.keys(sch.settings).length) err(where, 'This view shows settings, but the tool has none. Add a "settings" list or remove this view.');
+            if (v.fields != null) { if (!Array.isArray(v.fields)) err(where, '"fields" must be a list of setting ids.'); else v.fields.forEach(k => { if (!sch.settings[k]) err(where, unknownMsg(`setting "${k}"`, String(k), Object.keys(sch.settings))); }); }
+            break;
+          case 'sheet': {
+            listOk(v.fields, 'fields');
+            sortOk(v.sort, td, v.table);
+            if (v.child == null) break;
+            const cw = `${where} › child`;
+            if (!isObj(v.child)) { err(cw, '"child" is { "table", "link", "columns" }: the rows listed under each record.'); break; }
+            keysOk(v.child, ['table', 'link', 'columns', 'sort', 'where'], cw);
+            const ct = sch.tables[v.child.table];
+            if (!ct) { err(cw, v.child.table == null ? 'Add "table": the table of rows to list.' : unknownMsg(`table "${v.child.table}"`, String(v.child.table), Object.keys(sch.tables))); break; }
+            const links = Object.values(ct.cols).filter(c => c.type === 'ref' && c.table === v.table).map(c => c.id);
+            if (!ct.cols[v.child.link] || ct.cols[v.child.link].type !== 'ref' || ct.cols[v.child.link].table !== v.table) {
+              err(cw, links.length ? `"link" must be the column in "${v.child.table}" that links to "${v.table}": ${links.map(x => `"${x}"`).join(' or ')}.` : `"${v.child.table}" has no link column pointing to "${v.table}". Add a ref column to it first.`);
+            }
+            if (v.child.columns != null) { if (!Array.isArray(v.child.columns)) err(cw, '"columns" must be a list of column ids.'); else v.child.columns.forEach(k => colOk(k, 'column', ct, v.child.table)); }
+            sortOk(v.child.sort, ct, v.child.table);
+            if (v.child.where != null) formula(v.child.where, `${cw} › where`, { table: v.child.table, thisTable: v.child.table });
+            break;
+          }
+          case 'matrix':
+            if (!td) break;
+            for (const k of ['rows', 'columns']) formula(v[k], `${where} › ${k}`, { table: v.table, thisTable: v.table }, `"${k}": a column (or formula) whose values label the ${k}`);
+            metricsOk(v.metrics, true);
+            break;
+        }
+      };
+      if (spec.views != null && !Array.isArray(spec.views)) err('views', 'Make "views" a list.');
+      (Array.isArray(spec.views) ? spec.views : []).forEach((v, i) => checkView(v, `view ${i + 1}${isObj(v) && v.title ? ` "${v.title}"` : ''}`, false));
+
+      // Rows: seed rows and test data
+      const valueOk = (col, v, where, k, ids) => {
+        if (v === null || v === '') return;
+        switch (col.type) {
+          case 'number': case 'currency': case 'percent':
+            if (typeof v !== 'number') err(where, `"${k}" must be a number without quotes or units, for example 12.5.`); break;
+          case 'date': if (!isIsoDate(v)) err(where, `"${k}" must be a date written "YYYY-MM-DD", for example "2026-09-01".`); break;
+          case 'boolean': if (typeof v !== 'boolean') err(where, `"${k}" must be true or false, without quotes.`); break;
+          case 'choice': if (!Array.isArray(col.options) || !col.options.includes(v)) err(where, `"${v}" is not one of the options for "${k}"${Array.isArray(col.options) ? `: ${col.options.join(', ')}` : ''}.`); break;
+          case 'ref':
+            if (typeof v !== 'string') err(where, `"${k}" links to another row, so it holds that row's "id" in quotes.`);
+            else if (ids && !(ids[col.table] && ids[col.table].has(v))) err(where, `"${k}" links to "${v}", but no "${col.table}" row has that id. Give the ${col.table} row "id": "${v}", or correct the link.`);
+            break;
+          default: if (typeof v !== 'string') err(where, `"${k}" must be text in quotes.`);
+        }
+      };
+      const checkRows = (tablesData, where, strict) => {
+        const ids = {};
+        for (const [tk, rows] of Object.entries(tablesData)) ids[tk] = new Set((Array.isArray(rows) ? rows : []).map(r => isObj(r) && typeof r.id === 'string' ? r.id : null).filter(Boolean));
+        for (const [tk, rows] of Object.entries(tablesData)) {
+          const tw = `${where} › ${tk}`;
+          const td = sch.tables[tk];
+          if (!td) { err(tw, unknownMsg(`table "${tk}"`, tk, Object.keys(sch.tables))); continue; }
+          if (!Array.isArray(rows)) { err(tw, 'List the rows inside [ ].'); continue; }
+          const seen = new Set();
+          rows.forEach((r, i) => {
+            const rw = `${tw} › row ${i + 1}`;
+            if (!isObj(r)) { err(rw, 'Each row is an object of column values.'); return; }
+            if ('id' in r) {
+              if (typeof r.id !== 'string' || !r.id) err(rw, 'A row "id" must be text in quotes.');
+              else if (seen.has(r.id)) err(rw, `The id "${r.id}" is used twice.`);
+              seen.add(r.id);
+            }
+            for (const [k, v] of Object.entries(r)) {
+              if (k === 'id') continue;
+              const col = td.cols[k];
+              if (!col) { err(rw, unknownMsg(`column "${k}"`, k, Object.keys(td.cols))); continue; }
+              if (col.type === 'computed') { err(rw, `"${k}" is calculated, so leave it out of the row.`); continue; }
+              valueOk(col, v, rw, k, ids);
+            }
+            if (strict) for (const col of Object.values(td.cols)) {
+              if (col.required && col.type !== 'computed' && fxBlank(r[col.id]) && col.default == null && !col.defaultFormula) err(rw, `Give "${col.id}" a value: it is required.`);
+            }
+          });
+        }
+      };
+      if (spec.seed != null) {
+        if (!isObj(spec.seed)) err('seed', 'Make "seed" an object of table ids and their starting rows, for example { "disciplines": [ { "code": "AR", "name": "Architecture" } ] }.');
+        else checkRows(spec.seed, 'seed', true);
+      }
+
+      // Migrations
+      const sv = Number.isInteger(spec.schemaVersion) ? spec.schemaVersion : 1;
+      const got = new Set();
+      if (spec.migrations != null && !Array.isArray(spec.migrations)) err('migrations', 'Make "migrations" a list, for example [ { "to": 2, "steps": [ ... ] } ].');
+      (Array.isArray(spec.migrations) ? spec.migrations : []).forEach((m, i) => {
+        const where = `migration ${isObj(m) && m.to != null ? 'to ' + m.to : '#' + (i + 1)}`;
+        if (!isObj(m)) { err(where, 'Each migration is { "to": 2, "steps": [ ... ] }.'); return; }
+        keysOk(m, ['to', 'steps', 'description'], where);
+        if (!Number.isInteger(m.to) || m.to < 2 || m.to > sv) err(where, `"to" must be a schema version from 2 to ${sv} (the current schemaVersion).`);
+        else if (got.has(m.to)) err(where, `There are two migrations to ${m.to}.`);
+        else got.add(m.to);
+        if (!Array.isArray(m.steps)) { err(where, 'Add "steps": a list of changes, or [] if none are needed.'); return; }
+        m.steps.forEach((s, j) => {
+          const sw = `${where} › step ${j + 1}`;
+          if (!isObj(s)) { err(sw, 'Each step is an object with an "op".'); return; }
+          const op = STEP_OPS[s.op];
+          if (!op) { err(sw, s.op == null ? `Add "op": one of ${Object.keys(STEP_OPS).join(', ')}.` : unknownMsg(`op "${s.op}"`, String(s.op), Object.keys(STEP_OPS))); return; }
+          keysOk(s, ['op', 'description', ...op[0], ...op[1]], sw);
+          for (const k of op[0]) if (k !== 'map' && (typeof s[k] !== 'string' || !s[k])) err(sw, `Add "${k}".`);
+          if (s.op === 'mapValues' && !isObj(s.map)) err(sw, '"map" is an object of old value to new value, for example { "Yes": "Approved" }.');
+          if (s.op === 'setField') {
+            if (('value' in s) === ('formula' in s)) err(sw, 'Give either "value" or "formula", not both.');
+            if ('formula' in s) formula(s.formula, `${sw} › formula`, { raw: true });
+          }
+          if (s.when != null) formula(s.when, `${sw} › when`, { raw: true });
+        });
+      });
+      for (let v = 2; v <= sv; v++) if (!got.has(v)) err('migrations', `schemaVersion is ${sv}, so add a migration with "to": ${v} that upgrades files saved at schema ${v - 1}. Use "steps": [] if nothing needs changing.`);
+
+      // Tests
+      if (spec.tests != null && !Array.isArray(spec.tests)) err('tests', 'Make "tests" a list.');
+      const tests = Array.isArray(spec.tests) ? spec.tests : [];
+      tests.forEach((t, i) => {
+        const where = `test "${(isObj(t) && t.name) || '#' + (i + 1)}"`;
+        if (!isObj(t)) { err(where, 'Each test is { "name", "tables", "expect" }.'); return; }
+        keysOk(t, ['name', 'schemaVersion', 'settings', 'tables', 'expect'], where);
+        if (typeof t.name !== 'string' || !t.name) err(where, 'Add a "name".');
+        const tv = t.schemaVersion == null ? sv : t.schemaVersion;
+        if (!Number.isInteger(tv) || tv < 1 || tv > sv) err(where, `"schemaVersion" must be from 1 to ${sv}.`);
+        if (!isObj(t.tables)) { err(where, 'Add "tables": the rows to test with, as { "tableId": [ { ... } ] }.'); return; }
+        if (tv === sv) checkRows(t.tables, where, false);
+        if (t.settings != null && !isObj(t.settings)) err(where, '"settings" is an object of setting values.');
+        if (!Array.isArray(t.expect) || !t.expect.length) { err(where, 'Add "expect": a list of results, such as { "table": "items", "row": "i1", "field": "total", "equals": 25 }.'); return; }
+        t.expect.forEach((e, j) => {
+          const ew = `${where} › expect ${j + 1}`;
+          if (!isObj(e)) { err(ew, 'Each expectation is an object.'); return; }
+          if ('formula' in e) { keysOk(e, ['formula'], ew); formula(e.formula, ew, {}); return; }
+          if ('rows' in e) {
+            keysOk(e, ['table', 'rows'], ew);
+            if (!sch.tables[e.table]) err(ew, unknownMsg(`table "${e.table}"`, String(e.table), Object.keys(sch.tables)));
+            if (!Number.isInteger(e.rows)) err(ew, '"rows" is the number of rows expected.');
+            return;
+          }
+          keysOk(e, ['table', 'row', 'field', 'equals', 'tolerance'], ew, { value: 'Use "equals".', expected: 'Use "equals".', column: 'Use "field".' });
+          const td = sch.tables[e.table];
+          if (!td) { err(ew, e.table == null ? 'Use { "table", "row", "field", "equals" }, { "table", "rows" } or { "formula" }.' : unknownMsg(`table "${e.table}"`, String(e.table), Object.keys(sch.tables))); return; }
+          if (!td.cols[e.field]) err(ew, unknownMsg(`field "${e.field}" in table "${e.table}"`, String(e.field), Object.keys(td.cols)));
+          if (!('equals' in e)) err(ew, 'Add "equals": the value expected.');
+          if (tv === sv && !(Array.isArray(t.tables[e.table]) && t.tables[e.table].some(r => isObj(r) && r.id === e.row))) err(ew, `No "${e.table}" row in this test has "id": "${e.row}". Give the row an id and use it here.`);
+        });
+      });
+      if (!tests.length && computed.length) warn('tests', 'Add a test: a few rows and the results you expect, so the self-test proves the calculations.');
+    } catch (e) {
+      console.error(e);
+      err('definition', `Checking stopped unexpectedly (${e.message}). Fix the problems above, then check again.`);
+    }
+    return { problems, sch };
+  }
+
+  // Changes that would strand data in files saved by the previous version of the tool.
+  function specCompare(prev, spec) {
+    const out = [];
+    const warn = (where, message) => out.push({ level: 'warning', where, message });
+    if (!isObj(prev) || !isObj(spec)) return out;
+    if (prev.id && spec.id !== prev.id) warn('id', `The id changed from "${prev.id}" to "${spec.id}", so files saved by the current tool will not open in this one. Keep "${prev.id}" if this is the same tool.`);
+    if (JSON.stringify(prev) !== JSON.stringify(spec) && typeof spec.version === 'string' && typeof prev.version === 'string' && cmpSemver(spec.version, prev.version) <= 0) {
+      const [a, b] = prev.version.split('.').map(Number);
+      warn('version', `Increase "version" (it is still ${prev.version}), for example to "${a}.${(b || 0) + 1}.0".`);
+    }
+    if (Number.isInteger(spec.schemaVersion) && spec.schemaVersion < prev.schemaVersion) {
+      out.push({ level: 'error', where: 'schemaVersion', message: `schemaVersion went down from ${prev.schemaVersion} to ${spec.schemaVersion}. It must never decrease.` });
+    }
+    if (spec.schemaVersion !== prev.schemaVersion || !Array.isArray(prev.tables) || !Array.isArray(spec.tables)) return out;
+    for (const pt of prev.tables) {
+      if (!isObj(pt)) continue;
+      const nt = spec.tables.find(t => isObj(t) && t.id === pt.id);
+      if (!nt) { warn(`table "${pt.id}"`, 'This table was removed or renamed. Saved files keep its rows, but the tool will not show them. If it was renamed, increase schemaVersion and add a migration with a renameTable step.'); continue; }
+      for (const pc of pt.columns || []) {
+        if (!isObj(pc) || pc.type === 'computed') continue;
+        const nc = (nt.columns || []).find(c => isObj(c) && c.id === pc.id);
+        if (!nc) warn(`table "${pt.id}" › column "${pc.id}"`, 'This column was removed or renamed. Saved values stay in files but are not shown. If it was renamed, increase schemaVersion and add a migration with a renameField step.');
+        else if (nc.type !== pc.type && !(NUMERIC.includes(nc.type) && NUMERIC.includes(pc.type)) && !(['text', 'longtext', 'choice'].includes(nc.type) && ['text', 'longtext', 'choice'].includes(pc.type))) {
+          warn(`table "${pt.id}" › column "${pc.id}"`, `This column changed from ${pc.type} to ${nc.type}. Saved values may not fit. Increase schemaVersion and add a migration that converts them.`);
+        }
+      }
+    }
+    return out;
+  }
+
+  function specCompile(spec, sch) {
+    const def = { fromSpec: true };
+    for (const k of ['id', 'name', 'description', 'version', 'schemaVersion', 'locale', 'currency', 'home', 'versionUrl', 'identity', 'fileName', 'saveInPlace', 'properties']) {
+      if (spec[k] !== undefined) def[k] = spec[k];
+    }
+    const fx = (src, sc) => fxCompile(src, { sch, ...sc });
+    const rowCx = (table, row, extra) => ({ table, row, thisTable: table, thisRow: row, ...extra });
+    const fmtOf = t => ({ number: 'number', date: 'date', boolean: 'boolean', text: 'text' }[t]);
+    const colOut = (c, tk) => {
+      const { id, formula, defaultFormula, colorFormula, ...out } = c;
+      if (c.type === 'computed') {
+        const ast = fx(formula, { table: tk, thisTable: tk });
+        out.fn = row => fxEval(ast, rowCx(tk, row));
+        if (!out.format) { const f = fmtOf(sch.tables[tk].cols[id]._type); if (f) out.format = f; }
+        if (colorFormula) {
+          const cast = fx(colorFormula, { table: tk, thisTable: tk });
+          out.colors = (v, row) => { const x = fxEval(cast, rowCx(tk, row)); return typeof x === 'string' && x ? x : null; };
+        }
+      }
+      if (defaultFormula) { const dast = fx(defaultFormula, {}); out.default = () => fxEval(dast, {}); }
+      return out;
+    };
+    def.tables = {};
+    for (const t of spec.tables) {
+      const tk = t.id;
+      const td = { columns: {} };
+      for (const k of ['label', 'singular', 'readOnly', 'display']) if (t[k] !== undefined) td[k] = t[k];
+      for (const c of t.columns) td.columns[c.id] = colOut(c, tk);
+      if (t.displayFormula) {
+        const ast = fx(t.displayFormula, { table: tk, thisTable: tk });
+        td.display = row => fxStr(fxEval(ast, rowCx(tk, row)));
+      }
+      if (Array.isArray(t.checks) && t.checks.length) {
+        const checks = t.checks.map(ch => ({ ...ch, ast: fx(ch.errorIf, { table: tk, thisTable: tk }) }));
+        td.validate = row => {
+          const errs = {};
+          for (const ch of checks) {
+            let bad = false;
+            try { bad = fxTruthy(fxEval(ch.ast, rowCx(tk, row))); } catch (e) { console.warn('[carryall] check failed', e); }
+            const k = ch.field || '_form';
+            if (bad && !errs[k]) errs[k] = ch.message;
+          }
+          return errs;
+        };
+      }
+      if (Array.isArray(t.onSave) && t.onSave.length) {
+        const rules = t.onSave.map(r => ({
+          field: r.field, value: r.value,
+          when: r.when ? fx(r.when, { table: tk, thisTable: tk, before: true }) : null,
+          formula: 'formula' in r ? fx(r.formula, { table: tk, thisTable: tk, before: true }) : null,
+        }));
+        td.onSave = (row, before) => {
+          for (const r of rules) {
+            const cx = rowCx(tk, row, { before });
+            if (r.when && !fxTruthy(fxEval(r.when, cx))) continue;
+            row[r.field] = r.formula ? fxEval(r.formula, cx) : clone(r.value);
+          }
+        };
+      }
+      def.tables[tk] = td;
+    }
+    if (Array.isArray(spec.settings) && spec.settings.length) def.settings = { columns: Object.fromEntries(spec.settings.map(c => [c.id, colOut(c, null)])) };
+
+    const cond = (src, table) => { const ast = fx(src, { table, thisTable: table }); return r => fxTruthy(fxEval(ast, rowCx(table, r))); };
+    const sortOut = s => (s ? { key: s.column, dir: s.dir || 'asc' } : undefined);
+    const view = v => {
+      if (!VIEW_KEYS[v.type]) return { ...v };
+      const o = { ...v };
+      if (v.where) o.where = cond(v.where, v.table);
+      if (v.sort) o.sort = sortOut(v.sort);
+      if (v.type === 'kpi') {
+        o.items = v.items.map(it => {
+          const ast = fx(it.formula, {});
+          const t = fxCheck(ast, { sch }).type;
+          return { label: it.label, format: it.format || fmtOf(t) || 'number', decimals: it.decimals, value: () => fxEval(ast, {}) };
+        });
+      }
+      if (v.type === 'dashboard') o.blocks = v.blocks.map(view);
+      if (v.type === 'sheet' && v.child) o.child = { ...v.child, sort: sortOut(v.child.sort), where: v.child.where ? cond(v.child.where, v.child.table) : null };
+      if (v.type === 'matrix') {
+        for (const k of ['rows', 'columns']) {
+          const ast = fx(v[k], { table: v.table, thisTable: v.table });
+          const info = fxCheck(ast, { sch, table: v.table, thisTable: v.table });
+          o[k] = { fn: r => fxEval(ast, rowCx(v.table, r)), ref: info.type === 'ref' ? info.ref : null, format: fmtOf(info.type) };
+        }
+        o.metrics = (v.metrics || [{ label: 'Rows', op: 'count' }]).map(m => ({ ...m, where: m.where ? cond(m.where, v.table) : null }));
+      }
+      return o;
+    };
+    if (Array.isArray(spec.views) && spec.views.length) def.views = spec.views.map(view);
+
+    if (isObj(spec.seed) && Object.keys(spec.seed).length) {
+      const seed = clone(spec.seed);
+      def.onNew = (doc, api) => {
+        for (const [tk, rows] of Object.entries(seed)) for (const r of rows) api.insert(tk, { ...defaultsFor(S.app.tables[tk]), ...clone(r) });
+      };
+    }
+
+    def.migrations = {};
+    for (const m of spec.migrations || []) {
+      const steps = m.steps.map(s => ({ ...s, when: s.when ? fx(s.when, { raw: true }) : null, formula: 'formula' in s ? fx(s.formula, { raw: true }) : null }));
+      def.migrations[m.to] = (doc, ctx) => {
+        doc.tables = doc.tables || {};
+        for (const s of steps) runMigrationStep(doc, s, ctx);
+      };
+    }
+
+    const show = v => (v == null || v === '' ? 'blank' : typeof v === 'number' ? (isNaN(v) ? 'an error' : String(+v.toFixed(6))) : JSON.stringify(v));
+    def.fixtures = (spec.tests || []).map(t => {
+      const exps = t.expect.map(e => ('formula' in e ? { ...e, ast: fx(e.formula, {}) } : e));
+      const doc = { app: { id: spec.id, schemaVersion: t.schemaVersion || spec.schemaVersion }, tables: clone(t.tables) };
+      // Rows in a current-schema test get column defaults, as rows added in the tool would.
+      if (doc.app.schemaVersion === spec.schemaVersion) {
+        for (const [tk, rows] of Object.entries(doc.tables)) {
+          const cols = spec.tables.find(x => x.id === tk)?.columns || [];
+          for (const r of rows) for (const c of cols) if (r[c.id] === undefined && c.default !== undefined && c.type !== 'computed') r[c.id] = clone(c.default);
+        }
+      }
+      if (t.settings) doc.settings = clone(t.settings);
+      return {
+        name: t.name, doc,
+        expect: d => {
+          const fails = [];
+          for (const e of exps) {
+            try {
+              if (e.ast) {
+                if (fxTruthy(fxEval(e.ast, {}))) continue;
+                const n = e.ast;
+                fails.push(n.t === 'bin' && ['=', '<', '>', '<=', '>=', '<>'].includes(n.op)
+                  ? `"${e.formula}" is false: the left side is ${show(fxEval(n.a, {}))} and the right side is ${show(fxEval(n.b, {}))}`
+                  : `"${e.formula}" is false`);
+              } else if ('rows' in e) {
+                const n = (d.tables[e.table] || []).length;
+                if (n !== e.rows) fails.push(`${e.table} has ${n} rows, expected ${e.rows}`);
+              } else {
+                const row = (d.tables[e.table] || []).find(r => r.id === e.row);
+                if (!row) { fails.push(`there is no "${e.table}" row with id "${e.row}"`); continue; }
+                const v = rawValue(e.table, row, e.field);
+                const ok = typeof e.equals === 'number' && typeof v === 'number' && e.tolerance != null ? Math.abs(v - e.equals) <= e.tolerance : fxEq(v, e.equals);
+                if (!ok || (typeof v === 'number' && isNaN(v))) fails.push(`${e.table} "${e.row}" ${e.field} is ${show(v)}, expected ${show(e.equals)}${S.lastCalcError && isNaN(v) ? ` (${S.lastCalcError})` : ''}`);
+              }
+            } catch (x) { fails.push(`${e.formula || e.field}: ${x.message}`); }
+          }
+          return fails.length ? fails.join('; ') : true;
+        },
+      };
+    });
+    return def;
+  }
+  function runMigrationStep(doc, s, ctx) {
+    const rows = t => (Array.isArray(doc.tables[t]) ? doc.tables[t] : []);
+    switch (s.op) {
+      case 'renameTable':
+        if (Array.isArray(doc.tables[s.from])) { doc.tables[s.to] = rows(s.to).concat(doc.tables[s.from]); delete doc.tables[s.from]; }
+        break;
+      case 'renameField':
+        for (const r of rows(s.table)) if (s.from in r) { if (r[s.to] == null) r[s.to] = r[s.from]; delete r[s.from]; }
+        break;
+      case 'removeField':
+        for (const r of rows(s.table)) delete r[s.field];
+        break;
+      case 'setField':
+        for (const r of rows(s.table)) {
+          const cx = { raw: true, table: s.table, row: r, settings: doc.settings || {} };
+          if (s.when && !fxTruthy(fxEval(s.when, cx))) continue;
+          r[s.field] = s.formula ? fxEval(s.formula, cx) : clone(s.value);
+        }
+        break;
+      case 'mapValues':
+        for (const r of rows(s.table)) { const k = r[s.field]; if (k != null && Object.prototype.hasOwnProperty.call(s.map, String(k))) r[s.field] = s.map[String(k)]; }
+        break;
+      case 'textToRef': {
+        const target = doc.tables[s.target] = rows(s.target);
+        const key = v => String(v ?? '').trim().toLowerCase();
+        const byKey = new Map(target.map(x => [key(x[s.match]), x]));
+        for (const r of rows(s.table)) {
+          let name = String(r[s.field] ?? '').trim();
+          if (s.field !== s.to) delete r[s.field];
+          if (!name) { if (s.blankValue == null) { r[s.to] = null; continue; } name = String(s.blankValue); }
+          let hit = byKey.get(key(name));
+          if (!hit) { hit = { id: ctx.uid(), [s.match]: name }; target.push(hit); byKey.set(key(name), hit); }
+          r[s.to] = hit.id;
+        }
+        break;
+      }
+    }
+  }
+  // text -> { spec, def, problems }. def is set only when there are no errors.
+  function specLoad(text, previous = null) {
+    let raw;
+    try { raw = parseLoose(text); }
+    catch (e) { return { problems: [{ level: 'error', where: 'JSON', message: e.message }] }; }
+    let norm;
+    try { norm = specNormalise(raw); }
+    catch (e) { return { problems: [{ level: 'error', where: 'definition', message: e.message }] }; }
+    const { problems, sch } = specCheck(norm.spec);
+    problems.push(...specCompare(previous, norm.spec), ...norm.notes);
+    if (problems.some(p => p.level === 'error')) return { spec: norm.spec, problems };
+    try { return { spec: norm.spec, def: specCompile(norm.spec, sch), problems }; }
+    catch (e) {
+      console.error(e);
+      problems.push({ level: 'error', where: 'definition', message: `The tool could not be built: ${e.message}` });
+      return { spec: norm.spec, problems };
+    }
+  }
+
+  // ── Tool builder ───────────────────────────────────────────────────────
+  // Shown by the blank template and by "Edit tool definition" in a tool built from JSON.
+  // Paste a definition, check it (every problem listed, ready to paste back into Copilot),
+  // preview it and download it as a finished tool file.
+  const GUIDE_URL = 'https://blip2.github.io/carryall/guide.html';
+  const EXAMPLE_SPEC = {
+    id: 'snagging-tracker', name: 'Snagging tracker', version: '1.0.0', schemaVersion: 1,
+    description: 'Defects found on site, who must fix them and when.',
+    settings: [{ id: 'dueDays', label: 'Days allowed to fix a snag', type: 'number', decimals: 0, min: 1, default: 14 }],
+    tables: [
+      { id: 'areas', label: 'Areas', singular: 'area', display: 'name', columns: [
+        { id: 'name', label: 'Area', type: 'text', required: true, unique: true },
+        { id: 'open', label: 'Open snags', type: 'computed', format: 'integer', formula: "COUNT(snags WHERE area = this AND status <> 'Closed')" },
+      ] },
+      { id: 'snags', label: 'Snags', singular: 'snag', display: 'ref', columns: [
+        { id: 'ref', label: 'Ref', type: 'text', required: true, unique: true, mono: true, defaultFormula: "NEXTREF(snags.ref, 'SN-', 3)" },
+        { id: 'area', label: 'Area', type: 'ref', table: 'areas', required: true },
+        { id: 'description', label: 'Description', type: 'longtext', required: true },
+        { id: 'raised', label: 'Raised', type: 'date', defaultFormula: 'TODAY()' },
+        { id: 'status', label: 'Status', type: 'choice', options: ['Open', 'Fixed', 'Closed'], default: 'Open', colors: { Open: 'blue', Fixed: 'purple', Closed: 'green' } },
+        { id: 'due', label: 'Due', type: 'computed', format: 'date', formula: 'raised + settings.dueDays' },
+        { id: 'overdue', label: 'Overdue', type: 'computed', format: 'text', formula: "IF(status = 'Open' AND due < TODAY(), 'Overdue', '')", colors: { Overdue: 'red' } },
+      ] },
+    ],
+    views: [
+      { type: 'dashboard', title: 'Overview', blocks: [
+        { type: 'kpi', items: [
+          { label: 'Open snags', formula: "COUNT(snags WHERE status = 'Open')", format: 'integer' },
+          { label: 'Overdue', formula: "COUNT(snags WHERE overdue = 'Overdue')", format: 'integer' },
+        ] },
+        { type: 'summary', title: 'Open snags by area', table: 'snags', groupBy: 'area', where: "status <> 'Closed'" },
+      ] },
+      { type: 'table', title: 'Snags', table: 'snags', sort: { column: 'ref', dir: 'asc' }, filters: ['area', 'status'] },
+      { type: 'table', title: 'Areas', table: 'areas' },
+      { type: 'settings', title: 'Settings' },
+    ],
+    seed: { areas: [{ id: 'a1', name: 'Ground floor' }, { id: 'a2', name: 'First floor' }] },
+    tests: [{ name: 'Overdue flag', settings: { dueDays: 14 }, tables: {
+      areas: [{ id: 'a1', name: 'Ground floor' }],
+      snags: [{ id: 's1', ref: 'SN-001', area: 'a1', description: 'Scuffed door', raised: '2020-01-01', status: 'Open' }],
+    }, expect: [
+      { table: 'snags', row: 's1', field: 'due', equals: '2020-01-15' },
+      { table: 'snags', row: 's1', field: 'overdue', equals: 'Overdue' },
+      { table: 'areas', row: 'a1', field: 'open', equals: 1 },
+    ] }],
+  };
+  const STATE_KEYS = ['app', 'spec', 'data', 'dirty', 'readOnly', 'fileName', 'handle', 'undo', 'redo', 'tab', 'viewState', 'banners'];
+  const saveState = () => Object.fromEntries(STATE_KEYS.map(k => [k, S[k]]));
+  const restoreState = st => { for (const k of STATE_KEYS) S[k] = st[k]; };
+
+  function startBuilder({ text = '', previous = null, saved = null, result = null } = {}) {
+    S.builder = { text, previous, saved, result, stale: false };
+    S.mode = 'builder';
+  }
+  function openBuilder() {
+    startBuilder({ text: prettyJson(S.spec), previous: S.spec, saved: saveState() });
+    render();
+    document.getElementById('ca-spec-input')?.focus();
+  }
+  function closeBuilder() {
+    const b = S.builder;
+    if (!b || !b.saved) return;
+    restoreState(b.saved);
+    S.builder = null; S.mode = null;
+    render();
+  }
+  // Run the self-test against a compiled definition without disturbing the open document.
+  function testDefinition(def) {
+    const keep = saveState();
+    try {
+      S.app = buildApp(def);
+      S.data = null; S.viewState = {}; S.banners = [];
+      return selfTest(false);
+    } catch (e) {
+      return { passed: 0, failed: 1, results: [{ pass: false, name: 'self-test', detail: e.message }] };
+    } finally { restoreState(keep); }
+  }
+  function builderCheck() {
+    const b = S.builder;
+    const r = specLoad(b.text, b.previous);
+    if (r.def) {
+      const st = testDefinition(r.def);
+      r.selfTest = st;
+      for (const x of st.results) if (!x.pass) r.problems.push({ level: 'error', where: 'self-test', message: `${x.name}${x.detail ? ': ' + x.detail : ''}` });
+      if (st.failed) r.def = null;
+    }
+    b.result = r; b.stale = false;
+    if (r.spec && r.def) b.text = prettyJson(r.spec);
+    render();
+    document.getElementById('ca-builder-result')?.focus();
+  }
+  function builderPreview() {
+    const b = S.builder;
+    if (!b.result?.def) return;
+    b.previewFrom = saveState();
+    S.app = buildApp(b.result.def);
+    S.spec = b.result.spec;
+    S.data = newDocument();
+    Object.assign(S, { dirty: false, readOnly: false, fileName: null, handle: null, undo: [], redo: [], tab: 0, viewState: {}, banners: [] });
+    S.mode = 'preview';
+    render();
+  }
+  function backToBuilder() {
+    const b = S.builder;
+    if (b.previewFrom) restoreState(b.previewFrom);
+    b.previewFrom = null;
+    S.mode = 'builder';
+    render();
+  }
+  function toolFileName(spec) { return `${String(spec.fileName || spec.id).replace(/[\\/:*?"<>|]+/g, '-')}.html`; }
+  function buildToolFile(spec) {
+    const shell = S.shell.cloneNode(true);
+    shell.setAttribute('data-ca-core', CORE_VERSION);
+    shell.setAttribute('data-ca-app', spec.id);
+    shell.setAttribute('data-ca-app-version', spec.version);
+    let el = shell.querySelector('#ca-spec');
+    if (!el) {
+      el = document.createElement('script');
+      el.id = 'ca-spec'; el.type = 'application/json';
+      shell.querySelector('head').append(el);
+    }
+    el.textContent = '\n' + prettyJson(spec, true) + '\n';
+    const dataEl = shell.querySelector('#ca-data');
+    if (dataEl) dataEl.textContent = 'null';
+    const snap = shell.querySelector('#ca-snapshot');
+    if (snap) snap.textContent = '';
+    const title = shell.querySelector('title');
+    if (title) title.textContent = spec.name;
+    return '<!DOCTYPE html>\n' + shell.outerHTML + '\n';
+  }
+  function downloadTool() {
+    const spec = S.builder?.result?.spec;
+    if (!spec || !S.builder.result.def) return;
+    download(buildToolFile(spec), toolFileName(spec));
+    toast(`Downloaded ${toolFileName(spec)}. Open it in Edge or Chrome and choose Start new.`);
+  }
+  async function copyText(text, what = 'Copied') {
+    try { await navigator.clipboard.writeText(text); toast(what); return; } catch { /* fall back below */ }
+    const t = h('textarea', { value: text, style: { position: 'fixed', top: '0', opacity: '0' } });
+    document.body.append(t); t.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { /* ignore */ }
+    t.remove();
+    toast(ok ? what : 'Copy was blocked. Select the text and copy it yourself.');
+  }
+  function problemsForCopilot(problems) {
+    const errs = problems.filter(p => p.level === 'error'), tips = problems.filter(p => p.level === 'warning');
+    const line = (p, i) => `${i + 1}. ${p.where}: ${p.message}`;
+    return [
+      `The Carryall tool builder found ${errs.length} problem${errs.length === 1 ? '' : 's'} in the tool definition. Fix every one, keep everything else the same, and reply with the complete corrected definition as one JSON code block.`,
+      '', ...errs.map(line),
+      ...(tips.length ? ['', 'Also consider these suggestions:', ...tips.map(line)] : []),
+    ].join('\n');
+  }
+  async function builderLoadFile(file) {
+    let text = await file.text();
+    if (/\.html?$/i.test(file.name)) {
+      const doc = new DOMParser().parseFromString(text, 'text/html');
+      const el = doc.getElementById('ca-spec');
+      if (!el || !el.textContent.trim() || el.textContent.trim() === 'null') return alertDialog('No tool definition found', `${file.name} was not built from a tool definition, so there is nothing to load.`);
+      text = el.textContent.trim();
+    }
+    S.builder.text = text; S.builder.result = null;
+    builderCheck();
+  }
+  function renderBuilder() {
+    const b = S.builder;
+    const r = b.result;
+    const errs = r ? r.problems.filter(p => p.level === 'error') : [];
+    const tips = r ? r.problems.filter(p => p.level === 'warning') : [];
+    const tidy = r ? r.problems.filter(p => p.level === 'fixed') : [];
+    const stale = h('p', { class: 'ca-muted', role: 'status' }, b.stale ? 'The definition has changed since it was checked.' : '');
+    const input = h('textarea', {
+      class: 'ca-textarea ca-spec-input', id: 'ca-spec-input', spellcheck: 'false', autocomplete: 'off', value: b.text,
+      'aria-describedby': 'ca-spec-help',
+      oninput: e => { b.text = e.target.value; if (b.result && !b.stale) { b.stale = true; stale.textContent = 'The definition has changed since it was checked.'; } },
+    });
+    const problemList = list => h('ol', { class: 'ca-problems' }, list.map(p => h('li', h('span', { class: 'ca-problem-where' }, p.where), ' ', p.message)));
+    let result;
+    if (!r) {
+      result = h('p', { class: 'ca-muted' }, 'Select Check definition to look for problems.');
+    } else if (errs.length) {
+      result = [
+        h('h2', `${errs.length} problem${errs.length === 1 ? '' : 's'} to fix`),
+        h('p', 'Copy the problems into Copilot and ask it to send back the corrected definition. Then paste the new definition above and check it again.'),
+        h('div', { class: 'ca-row' }, h('button', { class: 'ca-btn primary', type: 'button', onclick: () => copyText(problemsForCopilot(r.problems), 'Problems copied. Paste them into Copilot.') }, 'Copy problems for Copilot')),
+        problemList(errs),
+      ];
+    } else {
+      const st = r.selfTest;
+      const nT = r.spec.tables.length, nV = (r.spec.views || []).length || nT;
+      result = [
+        h('h2', 'Ready to use'),
+        h('p', `${r.spec.name} (version ${r.spec.version}): ${nT} table${nT === 1 ? '' : 's'}, ${nV} view${nV === 1 ? '' : 's'}.${st ? ` Self-test: all ${st.passed} checks passed.` : ''}`),
+        h('div', { class: 'ca-row' },
+          h('button', { class: 'ca-btn primary', type: 'button', onclick: builderPreview }, 'Preview the tool'),
+          h('button', { class: 'ca-btn', type: 'button', onclick: downloadTool }, `Download ${toolFileName(r.spec)}`)),
+        h('p', { class: 'ca-help' }, b.previous
+          ? 'The download is the new version of the tool, with no data in it. Replace the hosted copy with it, then open saved files in it as usual.'
+          : 'The download is your finished tool, with no data in it. Open it in Edge or Chrome and choose Start new, or share it with your team.'),
+      ];
+    }
+    return h('div', { class: 'ca-builder' },
+      b.broken && h('div', { class: 'ca-banner warn', role: 'status' }, 'This file\'s tool definition has problems, so the tool cannot start. Fix them below.'),
+      h('div', { class: 'ca-card' },
+        h('h2', b.previous ? `Change ${b.previous.name}` : 'Build a tool from a definition'),
+        h('p', { id: 'ca-spec-help' }, b.previous
+          ? 'This is the current definition. Paste it into Copilot with the change you want, then paste Copilot\'s reply here and check it. Increase "version" for every change.'
+          : ['Ask the Carryall Tool Builder agent in Copilot to write a tool definition, then paste its reply here. ',
+            h('a', { href: GUIDE_URL, target: '_blank', rel: 'noopener' }, 'How to build a tool with Copilot'), '.']),
+        h('label', { for: 'ca-spec-input', class: 'ca-label' }, 'Tool definition (JSON)'),
+        input,
+        h('div', { class: 'ca-row', style: { marginTop: '0.75rem' } },
+          h('button', { class: 'ca-btn primary', type: 'button', onclick: builderCheck }, 'Check definition'),
+          h('button', { class: 'ca-btn', type: 'button', onclick: () => h('input', { type: 'file', accept: '.json,.txt,.html,.htm', onchange: e => e.target.files[0] && builderLoadFile(e.target.files[0]) }).click() }, 'Open a file…'),
+          h('button', { class: 'ca-btn', type: 'button', onclick: () => copyText(b.text, 'Definition copied.') }, 'Copy definition'),
+          !b.previous && h('button', { class: 'ca-btn', type: 'button', onclick: () => { b.text = prettyJson(EXAMPLE_SPEC); b.result = null; builderCheck(); } }, 'Load an example')),
+        stale),
+      h('section', { class: 'ca-card', id: 'ca-builder-result', tabindex: '-1', 'aria-live': 'polite', 'aria-label': 'Check result' }, result),
+      tips.length > 0 && h('section', { class: 'ca-card' }, h('h2', `Suggestions (${tips.length})`),
+        h('p', { class: 'ca-muted' }, 'These do not stop the tool working, but are worth fixing.'), problemList(tips)),
+      tidy.length > 0 && h('details', { class: 'ca-card' }, h('summary', `Tidied automatically (${tidy.length})`),
+        h('p', { class: 'ca-muted' }, 'These small variations were corrected. The downloaded tool uses the corrected definition.'), problemList(tidy)));
+  }
+
+  // ── Sheet and matrix views ─────────────────────────────────────────────
+  function sortRows(t, rows, { key, dir }) {
+    const m = dir === 'desc' ? -1 : 1;
+    return rows.map(r => [sortKey(t, r, key), r])
+      .sort(([a], [b]) => (a == null || a === '') ? 1 : (b == null || b === '') ? -1 : (a < b ? -m : a > b ? m : 0)).map(x => x[1]);
+  }
+  // One record at a time, with its linked rows underneath: a printable sheet.
+  function renderSheet(el, view, api, key) {
+    const t = view.table, td = S.app.tables[t];
+    if (!td) throw new Error(`Table "${t}" is not defined`);
+    const vs = S.viewState[key] = S.viewState[key] || {};
+    let recs = tableRows(t).filter(r => !view.where || view.where(r, api));
+    recs = view.sort ? sortRows(t, recs, view.sort) : [...recs].sort((a, b) => displayOf(t, a).localeCompare(displayOf(t, b), undefined, { numeric: true }));
+    if (!recs.length) {
+      el.append(UI.card(view.title || td.label, h('p', { class: 'ca-muted' }, `No ${td.label.toLowerCase()} yet.`),
+        !S.readOnly && !td.readOnly && h('button', { class: 'ca-btn primary', onclick: () => openForm(t) }, `+ Add ${td.singular}`)));
+      return;
+    }
+    if (!recs.some(r => r.id === vs.id)) vs.id = recs[0].id;
+    const rec = recs.find(r => r.id === vs.id);
+    const fields = (view.fields || Object.keys(td.columns).filter(k => !td.columns[k].hidden)).map(k => td.columns[k]).filter(Boolean);
+    const ch = view.child, ct = ch && S.app.tables[ch.table];
+    let kids = [];
+    if (ct) {
+      kids = tableRows(ch.table).filter(r => r[ch.link] === rec.id && (!ch.where || ch.where(r, api)));
+      if (ch.sort) kids = sortRows(ch.table, kids, ch.sort);
+    }
+    const cols = ct ? (ch.columns || Object.keys(ct.columns).filter(k => !ct.columns[k].hidden && k !== ch.link)).map(k => ct.columns[k]).filter(Boolean) : [];
+    const p = propsOn() ? S.data.properties : {};
+    const rev = currentRevision();
+    const selId = `ca-sheet-${key}`;
+    const ro = S.readOnly;
+    el.append(
+      h('div', { class: 'ca-tv-bar' },
+        h('label', { for: selId, class: 'ca-visually-hidden' }, `Choose ${td.singular}`),
+        h('select', { class: 'ca-select ca-sheet-select', id: selId, dataset: { caFocus: selId }, onchange: e => { vs.id = e.target.value; render(); } },
+          recs.map(r => h('option', { value: r.id, selected: r.id === rec.id }, displayOf(t, r)))),
+        h('span', { class: 'ca-spacer' }),
+        h('button', { class: 'ca-btn', onclick: () => openForm(t, rec.id) }, ro || td.readOnly ? `View ${td.singular}` : `Edit ${td.singular}`),
+        ct && !ro && !ct.readOnly && h('button', { class: 'ca-btn', onclick: () => openForm(ch.table, null, { [ch.link]: rec.id }) }, `+ Add ${ct.singular}`),
+        h('button', { class: 'ca-btn primary', onclick: () => window.print() }, 'Print')),
+      h('div', { class: 'ca-card ca-sheet' },
+        h('h2', `${view.title || td.singular}: ${displayOf(t, rec)}`),
+        (p.projectNumber || p.projectName || rev) && h('p', { class: 'ca-muted' },
+          [[p.projectNumber, p.projectName].filter(Boolean).join(' '), rev && `Revision ${rev.rev}, ${formatAs('date', rev.date)}`].filter(Boolean).join(' · ')),
+        h('dl', { class: 'ca-sheet-fields' }, fields.map(c => h('div', { class: c.type === 'longtext' ? 'wide' : null },
+          h('dt', c.label), h('dd', { class: c.type === 'longtext' ? 'ca-pre' : null }, formatCell(t, rec, c.key) || emptyText)))),
+        ct && h('h3', { class: 'ca-subhead ca-sheet-sub' }, `${ct.label} (${kids.length})`),
+        ct && h('div', { class: 'ca-table-wrap' }, h('table', { class: 'ca-table ca-sheet-table' },
+          h('thead', h('tr', cols.map(c => h('th', { scope: 'col', class: isNumericCol(c) ? 'num' : null }, c.label)))),
+          h('tbody', kids.length ? kids.map(r => h('tr', { class: 'clickable', tabindex: 0, onclick: () => openForm(ch.table, r.id), onkeydown: e => { if (e.key === 'Enter') openForm(ch.table, r.id); } },
+            cols.map(c => h('td', { class: isNumericCol(c) ? 'num' : c.type === 'longtext' ? 'ca-pre ca-long' : null }, c.type === 'longtext' ? formatCell(ch.table, r, c.key) : cellNode(ch.table, r, c)))))
+            : h('tr', h('td', { class: 'ca-empty', colspan: Math.max(1, cols.length) }, `No ${ct.label.toLowerCase()} for this ${td.singular} yet.`)))))));
+  }
+  // A cross-tab: rows and columns are values from the table (often links), cells are metrics.
+  function renderMatrix(el, view, api) {
+    const t = view.table, td = S.app.tables[t];
+    if (!td) throw new Error(`Table "${t}" is not defined`);
+    const axis = a => {
+      if (typeof a === 'string') { const c = colDef(t, a); if (!c) throw new Error(`Column "${a}" is not defined on ${t}`); return { fn: r => rawValue(t, r, a), ref: c.type === 'ref' ? c.table : null, col: c }; }
+      if (typeof a === 'function') return { fn: r => a(r, api) };
+      return a;
+    };
+    const R = axis(view.rows), C = axis(view.columns);
+    const label = (ax, v) => {
+      if (fxBlank(v)) return '(none)';
+      if (ax.ref) { const row = rowById(ax.ref, v); return row ? displayOf(ax.ref, row) : '(missing)'; }
+      if (ax.col) return formatAs(ax.col.type === 'computed' ? ax.col.format || 'text' : ax.col.type, v, ax.col);
+      return formatAs(ax.format || (typeof v === 'number' ? 'number' : 'text'), v);
+    };
+    const metrics = view.metrics || [{ label: 'Rows', op: 'count' }];
+    const fmts = metrics.map(m => metricFormat(t, m));
+    const rows = tableRows(t).filter(r => !view.where || view.where(r, api));
+    const cells = new Map(), rk = new Map(), ck = new Map();
+    for (const r of rows) {
+      const a = R.fn(r), b = C.fn(r);
+      const ka = String(a ?? ''), kb = String(b ?? '');
+      if (!rk.has(ka)) rk.set(ka, label(R, a));
+      if (!ck.has(kb)) ck.set(kb, label(C, b));
+      const k = ka + '\u0000' + kb;
+      if (!cells.has(k)) cells.set(k, []);
+      cells.get(k).push(r);
+    }
+    const order = m => [...m.entries()].sort((x, y) => x[1].localeCompare(y[1], undefined, { numeric: true }));
+    const rowKeys = order(rk), colKeys = order(ck);
+    const values = list => metrics.map((m, i) => formatAs(fmts[i], metricValue(t, m.where ? list.filter(r => m.where(r, api)) : list, m)) || '0');
+    const card = h('div', { class: 'ca-card' }, view.title && h('h2', view.title));
+    if (!rows.length) { card.append(h('p', { class: 'ca-muted' }, `No ${td.label.toLowerCase()} to show yet.`)); el.append(card); return; }
+    const listCols = Object.values(td.columns).filter(c => !c.hidden && c.type !== 'longtext').slice(0, 5);
+    const show = (rl, cl, list) => dialog({
+      title: `${rl}, ${cl}: ${list.length} ${list.length === 1 ? td.singular : td.label.toLowerCase()}`, wide: true,
+      body: h('div', { class: 'ca-table-wrap' }, h('table', { class: 'ca-table' },
+        h('thead', h('tr', listCols.map(c => h('th', { scope: 'col' }, c.label)))),
+        h('tbody', list.map(r => h('tr', { class: 'clickable', tabindex: 0, onclick: () => openForm(t, r.id), onkeydown: e => { if (e.key === 'Enter') openForm(t, r.id); } },
+          listCols.map(c => h('td', cellNode(t, r, c)))))))),
+    });
+    card.append(
+      h('div', { class: 'ca-table-wrap' }, h('table', { class: 'ca-table ca-matrix' },
+        h('thead', h('tr', h('td', ''), colKeys.map(([, l]) => h('th', { scope: 'col' }, l)))),
+        h('tbody', rowKeys.map(([ka, rl]) => h('tr', h('th', { scope: 'row' }, rl), colKeys.map(([kb, cl]) => {
+          const list = cells.get(ka + '\u0000' + kb);
+          if (!list) return h('td', '');
+          const text = values(list).join(' / ');
+          return h('td', h('button', { class: 'ca-matrix-cell', type: 'button', 'aria-label': `${rl}, ${cl}: ${metrics.map((m, i) => `${m.label || m.op} ${values(list)[i]}`).join(', ')}`, onclick: () => show(rl, cl, list) }, text));
+        })))))),
+      h('p', { class: 'ca-help' }, `Each cell shows ${metrics.map(m => m.label || m.op).join(' / ')}. Select a cell to see its ${td.label.toLowerCase()}.`));
+    el.append(card);
+  }
+
   // ── Boot ───────────────────────────────────────────────────────────────
   function bindGlobal() {
-    window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+    window.addEventListener('beforeunload', e => { if (S.dirty && S.mode !== 'preview') { e.preventDefault(); e.returnValue = ''; } });
     document.addEventListener('keydown', e => {
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod || !S.data) return;
+      if (!mod || !S.data || S.mode) return;
       const k = e.key.toLowerCase();
       if (k === 's') { e.preventDefault(); save({ as: e.shiftKey }); return; }
       if (document.querySelector('dialog[open]') || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
@@ -2190,8 +4631,21 @@ body.ca-dragging::after {
   }
   async function boot() {
     S.root = document.getElementById('ca-root');
-    if (!S.app) { S.root.textContent = 'Carryall: no app defined. Add Carryall.app({...}) in <script id="ca-app">.'; return; }
+    if (S.defineError) { S.root.textContent = `Carryall: the app definition has an error. ${S.defineError.message}`; return; }
     captureShell();
+    if (!S.app) {
+      // No JavaScript app: build the tool from its JSON definition, or open the tool builder.
+      const text = document.getElementById('ca-spec')?.textContent.trim() || '';
+      const r = text && text !== 'null' ? specLoad(text) : null;
+      if (r && r.def) { S.app = buildApp(r.def); S.spec = r.spec; }
+      else {
+        startBuilder({ text: r ? text : '', result: r });
+        if (r) S.builder.broken = true;
+        bindGlobal();
+        render();
+        return;
+      }
+    }
     S.isHome = computeIsHome();
     const api = makeApi();
     for (const p of S.plugins) { try { p.setup && p.setup(api); } catch (e) { console.error(`[carryall] plugin ${p.name} failed`, e); } }
@@ -2225,6 +4679,8 @@ body.ca-dragging::after {
     h, ui: UI, util: Util,
     get api() { return makeApi(); },
     selfTest,
+    // Tool definitions (JSON): check one, or read it leniently. Used by the tool builder.
+    checkDefinition: text => { const r = specLoad(text); return { ok: !!r.def, problems: r.problems, definition: r.spec || null }; },
     _state: S, // for debugging only; not a stable API
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
@@ -2232,47 +4688,10 @@ body.ca-dragging::after {
 })();
 </script>
 <script id="ca-app">
-/* ═══════════════════════════════════════════════════════════════════════
-   APP DEFINITION: the only script you edit. See the README comment at the
-   top of this file for the full reference.
-   This starter is a tiny tracker; replace it with your own tool.
-   ═══════════════════════════════════════════════════════════════════════ */
-Carryall.app({
-  id: 'starter-tracker',          // stable forever: files are matched to tools by id
-  name: 'Starter Tracker',
-  version: '0.1.0',               // app code version (semver)
-  schemaVersion: 1,               // bump + add a migration when stored data changes shape
-  description: 'A minimal example. Replace this definition with your own tool.',
-  home: null,                     // e.g. 'https://tracker.example.net/' once hosted
-  locale: 'en-GB',
-  currency: 'GBP',
-
-  tables: {
-    items: {
-      label: 'Items', singular: 'item', display: 'title',
-      columns: {
-        title:  { type: 'text', required: true },
-        status: { type: 'choice', options: ['To do', 'Doing', 'Done'], default: 'To do',
-                  colors: { 'To do': 'grey', 'Doing': 'blue', 'Done': 'green' } },
-        due:    { type: 'date' },
-        amount: { type: 'currency', min: 0 },
-        overdue: { type: 'computed', format: 'boolean',
-                   fn: (r, api) => !!r.due && r.status !== 'Done' && r.due < api.today },
-      },
-    },
-  },
-
-  views: [
-    { type: 'table', title: 'Items', table: 'items', sort: { key: 'due', dir: 'asc' },
-      totals: ['amount'], filters: ['status'] },
-    { type: 'summary', title: 'By status', table: 'items', groupBy: 'status',
-      metrics: [{ label: 'Items', op: 'count' }, { label: 'Amount', op: 'sum', column: 'amount' }] },
-  ],
-
-  migrations: {
-    // 2: (doc, ctx) => { for (const r of doc.tables.items) { ... } },
-  },
-});
+/* Optional JavaScript. Most tools are defined by the JSON tool definition in
+   <script id="ca-spec">: open this file in Edge or Chrome to use the tool builder.
+   Developers can instead define a tool here with Carryall.app({...}), or add view types
+   with Carryall.plugin({...}). See "JAVASCRIPT APPS" in the README comment at the top. */
 </script>
 </body>
 </html>

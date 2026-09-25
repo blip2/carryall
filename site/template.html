@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+  <div class="wrap">
+    <a class="brand" href="index.html">Carryall</a>
+    <nav class="site" aria-label="Site">
+      <ul>{{nav}}</ul>
+    </nav>
+  </div>
+</header>
+<main id="main" class="wrap">
+{{main}}
+</main>
+<footer>
+  <div class="wrap">Carryall is open source under the MIT licence. <a href="https://github.com/blip2/carryall">View the code on GitHub</a>.</div>
+</footer>
+<p class="visually-hidden" role="status" id="copy-status"></p>
+<script>
+// Copy buttons for code blocks.
+document.querySelectorAll('.codeblock').forEach(block => {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn small copy';
+  btn.textContent = 'Copy';
+  btn.setAttribute('aria-label', block.dataset.label || 'Copy this code');
+  btn.addEventListener('click', async () => {
+    const text = block.querySelector('code').textContent;
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
+      const range = document.createRange();
+      range.selectNodeContents(block.querySelector('code'));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+    }
+    btn.textContent = ok ? 'Copied' : 'Select and copy';
+    document.getElementById('copy-status').textContent = ok ? 'Copied to the clipboard' : 'Copy was blocked: the text is selected, so copy it yourself';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2500);
+  });
+  block.prepend(btn);
+});
+</script>
+</body>
+</html>
