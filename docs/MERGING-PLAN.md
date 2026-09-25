@@ -133,9 +133,10 @@ and for a command-line tool. Input: two envelopes. Output: `{ doc, conflicts, re
        both sides agree); different values are a **conflict**.
    - Only in ours: if theirs has a tombstone, it was deleted there. If any of our field stamps are not
      covered by their clock, we edited it after they last saw it: **conflict** ("deleted in their
-     copy, changed in yours"); otherwise delete it. If there is no tombstone but their clock covers
-     the row's creation stamp, they had the row and it vanished without a tombstone (an older core
-     deleted it): **conflict**. Otherwise we added it: keep it.
+     copy, changed in yours"); otherwise delete it. If there is no tombstone but the row has a real
+     (not genesis) creation stamp that their clock covers, they had the row and it vanished without
+     a tombstone (an older core deleted it): **conflict**. Otherwise treat it as added and keep it
+     (see 4.4: a genesis row missing on one side is never deleted silently).
    - Only in theirs: the mirror image.
 5. **Settings and properties**: the same field rule per key. `properties.revisions` is a list keyed
    by `rev`: take the union, oldest first; the same `rev` with different content is a conflict.
