@@ -12,4 +12,5 @@ Follow [AGENTS.md](../AGENTS.md) for every Carryall tool. In short:
 - Include `tests` with hand-worked results. Inside `WHERE`, use `this` (never `id`) for the row that owns
   the formula.
 - Changing a tool that is in use: increase `version`; if stored data changes shape, increase
-  `schemaVersion` and append a migration plus a test at the old schema version.
+  `schemaVersion` and append a migration plus a test at the old schema version. Migrations must give the
+  same result wherever they run (no `TODAY()` or `USER()`), so copies upgraded separately still combine.

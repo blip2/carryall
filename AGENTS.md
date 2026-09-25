@@ -20,7 +20,8 @@ JavaScript: the core checks every part of a definition and explains each problem
 7. Include `tests` with hand-worked results for the calculations that matter.
 8. When changing the shape of stored data on a released tool: increase `version` and `schemaVersion`,
    append a migration with declarative steps, add a test at the previous schema version, and never
-   edit old migrations.
+   edit old migrations. Migrations must give the same result wherever they run (no `TODAY()` or
+   `USER()`), so copies upgraded by different people can still be combined.
 9. Follow [docs/STYLE-GUIDE.md](docs/STYLE-GUIDE.md) for UI copy: sentence case, plain UK English, no em
    dashes or emoji, never colour alone.
 10. Verify after every change: `node tools/check.mjs <file>` runs the tool builder's checks in the

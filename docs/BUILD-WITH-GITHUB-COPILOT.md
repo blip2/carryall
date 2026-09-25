@@ -55,6 +55,7 @@ problem without opening a browser.
 | `node tools/check.mjs examples/my-tool.html` | Checks the definition in the file's `#ca-spec` block. Exit code 1 if there are problems. |
 | `node tools/check.mjs my-tool.json` | Checks a definition kept as a separate JSON file. |
 | `node tools/check.mjs examples/my-tool.html --selftest` | Also renders every view and runs the tests and migrations in headless Chromium. Needs Playwright. |
+| `node tools/combine.mjs a.html b.html -o combined.html` | Combines two copies of a document that different people edited. Lists any clashes; `--prefer ours`, `theirs` or `newest` settles them. Needs Playwright. |
 | `node tools/dev-server.mjs examples` | Serves the folder at `http://localhost:8765/` to try tools in a browser. |
 | `node tools/sync-core.mjs` | Updates the Carryall core inside every tool file after pulling a new version of Carryall. |
 

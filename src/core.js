@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const CORE_VERSION = '0.2.0';
+  const CORE_VERSION = '0.3.0';
   const FORMAT = 'carryall/1';
   const PAGE = 500;                 // rows rendered before "show more"
   const SOFT_ROWS = 5000;           // size advisory thresholds
@@ -38,6 +38,9 @@
     builder: null,
     calc: null,           // per-render cache of calculated values (WeakMap row -> Map)
     lastCalcError: null,
+    actor: null,          // this editing session's change-stamp actor { id, n, by }
+    baseline: null,       // the document as last stamped (see stampPending)
+    baselineFor: null,    // the document object the baseline belongs to
   };
 
   // ── Small utilities ────────────────────────────────────────────────────
@@ -45,6 +48,20 @@
   function uid(n = 10) {
     const b = crypto.getRandomValues(new Uint8Array(n));
     return Array.from(b, x => ALPHA[x & 31]).join('');
+  }
+  // A stable id made from its parts: the same parts give the same id in every copy.
+  function hashId(...parts) {
+    const str = JSON.stringify(parts);
+    let a = 0x811c9dc5, b = 0x9747b28c;
+    for (let i = 0; i < str.length; i++) {
+      const c = str.charCodeAt(i);
+      a = Math.imul(a ^ c, 0x01000193) >>> 0;
+      b = Math.imul(b ^ c, 0x5bd1e995) >>> 0; b = (b ^ (b >>> 13)) >>> 0;
+    }
+    let out = '';
+    for (let i = 0; i < 5; i++) out += ALPHA[(a >>> (i * 5)) & 31];
+    for (let i = 0; i < 5; i++) out += ALPHA[(b >>> (i * 5)) & 31];
+    return out;
   }
   const clone = x => (x == null ? x : JSON.parse(JSON.stringify(x)));
   const nowISO = () => new Date().toISOString();
@@ -260,11 +277,17 @@
     doc.tables = doc.tables || {};
     for (const tk of Object.keys(S.app.tables)) {
       if (!Array.isArray(doc.tables[tk])) doc.tables[tk] = [];
+      // Missing or repeated ids are replaced with ids made from the row, so the same file
+      // gets the same ids wherever it is opened (copies can then be combined).
       const seen = new Set();
-      for (const r of doc.tables[tk]) {
-        if (!r.id || seen.has(r.id)) r.id = uid();
+      doc.tables[tk].forEach((r, i) => {
+        if (!r.id || seen.has(r.id)) {
+          let id = hashId(doc.meta.docId, tk, i, JSON.stringify(r));
+          while (seen.has(id)) id = hashId(id);
+          r.id = id;
+        }
         seen.add(r.id);
-      }
+      });
     }
     return doc; // unknown tables/columns are preserved untouched
   }
@@ -275,15 +298,21 @@
     if (id && id !== S.app.id) throw new Error(`This file belongs to the tool "${id}", not "${S.app.id}".`);
   }
   function migrate(doc) {
+    markUnsure(doc);
+    const trusted = !!doc.sync && !isUnsure(doc);
     const target = S.app.schemaVersion;
     const from = doc.app.schemaVersion || 1;
     const api = makeApi();
     for (let v = from + 1; v <= target; v++) {
       const fn = S.app.migrations[v];
       if (typeof fn !== 'function') throw new Error(`Missing migration to schema ${v}.`);
-      doc = fn(doc, { uid, api, fromVersion: from }) || doc;
+      // stableId gives rows created by a migration the same id in every copy of the file.
+      const seed = doc.meta?.docId || '';
+      doc = fn(doc, { uid, stableId: (...parts) => hashId(seed, v, ...parts), api, fromVersion: from, toVersion: v }) || doc;
       doc.app.schemaVersion = v;
     }
+    pruneSync(doc);
+    if (trusted) sealDoc(doc);
     doc.meta = doc.meta || {};
     doc.meta.migrations = (doc.meta.migrations || []).concat({ from, to: target, at: nowISO(), appVersion: S.app.version });
     return doc;
@@ -293,7 +322,7 @@
   function serialise(doc) {
     const j = v => JSON.stringify(v).replace(/</g, '\\u003c');
     const lines = ['{'];
-    const keys = Object.keys(doc).filter(k => k !== 'tables');
+    const keys = Object.keys(doc).filter(k => k !== 'tables' && k !== 'sync');
     keys.forEach(k => lines.push(`  ${j(k)}: ${j(doc[k])},`));
     lines.push('  "tables": {');
     const tks = Object.keys(doc.tables || {});
@@ -303,6 +332,18 @@
       lines.push(`    ${j(tk)}: [`);
       rows.forEach((r, ri) => lines.push(`      ${j(r)}${ri < rows.length - 1 ? ',' : ''}`));
       lines.push(`    ]${i < tks.length - 1 ? ',' : ''}`);
+    });
+    if (!doc.sync) { lines.push('  }', '}'); return lines.join('\n'); }
+    // Change stamps come last: one line per part, and one line per table for row stamps.
+    lines.push('  },', '  "sync": {');
+    const sk = Object.keys(doc.sync);
+    sk.forEach((k, i) => {
+      const v = doc.sync[k], end = i < sk.length - 1 ? ',' : '';
+      const per = ['rows', 'fields', 'deleted'].includes(k) && v && typeof v === 'object' ? Object.keys(v) : null;
+      if (!per || !per.length) { lines.push(`    ${j(k)}: ${j(v)}${end}`); return; }
+      lines.push(`    ${j(k)}: {`);
+      per.forEach((tk, ti) => lines.push(`      ${j(tk)}: ${j(v[tk])}${ti < per.length - 1 ? ',' : ''}`));
+      lines.push(`    }${end}`);
     });
     lines.push('  }', '}');
     return lines.join('\n');
@@ -320,6 +361,7 @@
   async function loadDocument(doc, { fileName = null, handle = null, source = 'file' } = {}) {
     checkEnvelope(doc);
     doc = clone(doc);
+    markUnsure(doc);
     doc.app = doc.app || { id: S.app.id, schemaVersion: 1 };
     const fileSchema = doc.app.schemaVersion || 1;
     const fileAppVersion = doc.app.version || '?';
@@ -342,6 +384,7 @@
     }
     normalise(doc);
     S.data = doc;
+    newSession();
     S.readOnly = readOnly;
     S.dirty = dirty;
     S.fileName = fileName;
@@ -366,6 +409,9 @@
     } catch (e) {
       return alertDialog('Could not open file', e.message);
     }
+    const choice = await askCombineOrOpen(doc, name);
+    if (choice === 'combine') return combineWith(doc, name);
+    if (!choice) return;
     if (!(await guardDirty())) return;
     try {
       await loadDocument(doc, { fileName: name, handle: ext === 'html' || ext === 'htm' ? handle : null, source: 'file' });
@@ -415,27 +461,57 @@
       return;
     }
     S.data = doc;
+    newSession();
     S.fileName = null; S.handle = null; S.readOnly = false; S.dirty = false;
     S.undo = []; S.redo = []; S.viewState = {}; S.tab = 0;
     render();
   }
 
   // ── Mutations & undo ───────────────────────────────────────────────────
-  function snapshot() { return JSON.stringify({ tables: S.data.tables, settings: S.data.settings, properties: S.data.properties }); }
-  function restore(snap) { const s = JSON.parse(snap); S.data.tables = s.tables; S.data.settings = s.settings; S.data.properties = s.properties; }
-  function mutate(fn) {
+  // Undo entries hold the data only. Combining copies also replaces the change stamps, so its
+  // entries (withSync) hold them too, and undoing it really returns to the state before.
+  function snapshot(withSync = false) {
+    const d = S.data;
+    return JSON.stringify(withSync ? { sync: d.sync || null, meta: d.meta, tables: d.tables, settings: d.settings, properties: d.properties }
+      : { tables: d.tables, settings: d.settings, properties: d.properties });
+  }
+  const hasSync = snap => snap.startsWith('{"sync":');
+  function restore(snap) {
+    const s = JSON.parse(snap);
+    S.data.tables = s.tables; S.data.settings = s.settings; S.data.properties = s.properties;
+    if ('sync' in s) {
+      // The save count and time never go back, so a later download never reuses a save number.
+      const cur = S.data.meta || {};
+      S.data.meta = { ...s.meta, revision: Math.max(s.meta?.revision || 0, cur.revision || 0), savedAt: cur.savedAt ?? s.meta?.savedAt ?? null };
+      if (s.sync) S.data.sync = s.sync; else delete S.data.sync;
+      // This session's counter never goes back, so a stamp can never name two different changes.
+      if (S.actor && S.data.sync && (S.data.sync.clock?.[S.actor.id] || 0) < S.actor.n) S.data.sync.clock[S.actor.id] = S.actor.n;
+      setBaseline();
+    }
+  }
+  function mutate(fn, { withSync = false } = {}) {
     if (!S.data) throw new Error('No document is open.');
     if (S.seeding) return fn(S.data);
     if (S.readOnly) { toast('This file is read-only.'); return; }
-    S.undo.push(snapshot());
+    S.undo.push(snapshot(withSync));
     if (S.undo.length > 100) S.undo.shift();
     S.redo = [];
     const out = fn(S.data);
     markDirty();
     return out;
   }
-  function undo() { if (!S.undo.length || S.readOnly) return; S.redo.push(snapshot()); restore(S.undo.pop()); markDirty(); }
-  function redo() { if (!S.redo.length || S.readOnly) return; S.undo.push(snapshot()); restore(S.redo.pop()); markDirty(); }
+  function undo() {
+    if (!S.undo.length || S.readOnly) return;
+    const snap = S.undo.pop();
+    if (hasSync(snap)) stampPending(); // stamps are replaced, so record pending edits first
+    S.redo.push(snapshot(hasSync(snap))); restore(snap); markDirty();
+  }
+  function redo() {
+    if (!S.redo.length || S.readOnly) return;
+    const snap = S.redo.pop();
+    if (hasSync(snap)) stampPending();
+    S.undo.push(snapshot(hasSync(snap))); restore(snap); markDirty();
+  }
   function markDirty() { S.dirty = true; scheduleRecovery(); render(); }
 
   function tableRows(t) {
@@ -628,6 +704,7 @@
   const recKey = () => `${S.app.id}/${S.data.meta.docId}`;
   const scheduleRecovery = debounce(() => {
     if (!S.data || !S.dirty || S.mode === 'preview') return;
+    stampPending();
     IDB.put({ key: recKey(), appId: S.app.id, fileName: S.fileName, at: nowISO(), data: clone(S.data) }).catch(e => console.warn('[carryall] recovery save failed', e));
   }, 800);
   async function offerRecovery(source) {
@@ -642,6 +719,7 @@
       `this document has edits that were ${unsavedWord()}, from ${fmtDateTime(rec.at)}.`,
       h('span', { class: 'ca-spacer' }),
       h('button', { class: 'ca-btn primary', onclick: () => restoreRecovery(rec) }, 'Restore them'),
+      !S.readOnly && h('button', { class: 'ca-btn', onclick: () => { clearBanners('recovery'); combineWith(rec.data, 'the recovery copy'); } }, 'Combine them'),
       h('button', { class: 'ca-btn', onclick: () => { IDB.del(rec.key); clearBanners('recovery'); render(); } }, 'Discard'),
     ]);
     render();
@@ -652,6 +730,852 @@
     S.dirty = true;
     render();
     toast(`Changes restored. Remember to ${saveWord().toLowerCase()}.`);
+  }
+
+  // ── Change stamps (for combining copies) ───────────────────────────────
+  // doc.sync records which editing session last changed each stored value, as a stamp
+  // "actor:n", and how far the document has seen each session (clock: { actor: n }).
+  //   rows[t][id]         stamp of the change that added the row (and of its unchanged fields)
+  //   fields[t][id][col]  stamp of a later change to one field
+  //   settings[k], properties[k]   the same for settings and document properties
+  //   deleted[t][id]      stamp of the change that deleted a row
+  //   actors[a]           { by, at }: who the session was and when it last changed something
+  // No entry means the genesis stamp "0:0", which every clock covers, so files from older
+  // cores take part without conversion. Each load is a new actor, so a stamp is never reused.
+  const SYNC_VERSION = 1;
+  const GENESIS = '0:0';
+  const SYNC_PARTS = ['clock', 'actors', 'rows', 'fields', 'settings', 'properties', 'deleted'];
+  // Document properties that are combined. The check is one unit: who, when and the fingerprint.
+  // createdBy is filled in by the first download in each copy, so it is never a conflict: a
+  // blank one is filled from the other copy.
+  const PROP_KEYS = ['projectNumber', 'projectName', 'check'];
+  function syncOf(doc) {
+    if (!doc.sync || typeof doc.sync !== 'object') doc.sync = {};
+    const sy = doc.sync;
+    if (!sy.v) sy.v = SYNC_VERSION;
+    for (const k of SYNC_PARTS) if (!sy[k] || typeof sy[k] !== 'object' || Array.isArray(sy[k])) sy[k] = {};
+    return sy;
+  }
+  const blankish = v => (v === undefined || v === '' ? null : v);
+  const sameVal = (a, b) => JSON.stringify(blankish(a)) === JSON.stringify(blankish(b));
+  function splitStamp(st) { const i = st.lastIndexOf(':'); return [st.slice(0, i), +st.slice(i + 1)]; }
+  function covers(clock, st) {
+    if (!st || st === GENESIS) return true;
+    const [a, n] = splitStamp(st);
+    return (clock?.[a] || 0) >= n;
+  }
+  const stampOf = (sy, t, id, k) => sy.fields?.[t]?.[id]?.[k] || sy.rows?.[t]?.[id] || GENESIS;
+  const rowStamps = (sy, t, id) => [sy.rows?.[t]?.[id], ...Object.values(sy.fields?.[t]?.[id] || {})].filter(Boolean);
+  const stampTime = (sy, st) => (st && st !== GENESIS ? sy.actors?.[splitStamp(st)[0]]?.at || '' : '');
+  // The most recent of several stamps, judged by when each session last changed something.
+  function latestStamp(sy, stamps) {
+    const real = stamps.filter(x => x && x !== GENESIS);
+    if (!real.length) return null;
+    return real.sort((x, y) => stampTime(sy, y).localeCompare(stampTime(sy, x)) || (y > x ? 1 : y < x ? -1 : 0))[0];
+  }
+  function propValue(p, k) {
+    if (k !== 'check') return p[k] ?? null;
+    return p.checkedBy || p.checkedAt || p.checkedHash ? [p.checkedBy ?? null, p.checkedAt ?? null, p.checkedHash ?? null] : null;
+  }
+  function setPropValue(p, k, v) {
+    if (k !== 'check') { p[k] = v ?? null; return; }
+    [p.checkedBy, p.checkedAt, p.checkedHash] = Array.isArray(v) ? v : [null, null, null];
+  }
+  function newStamp(sy, actor) {
+    actor.n = Math.max(actor.n || 0, sy.clock[actor.id] || 0) + 1;
+    sy.clock[actor.id] = actor.n;
+    const who = sy.actors[actor.id] || (sy.actors[actor.id] = { by: null, at: null });
+    who.by = (actor.by && actor.by()) || who.by || null;
+    who.at = nowISO();
+    return `${actor.id}:${actor.n}`;
+  }
+  // The state as last stamped: one JSON string per row, setting and property.
+  function takeBaseline(doc) {
+    const b = { tables: {}, settings: {}, properties: {} };
+    for (const [tk, rows] of Object.entries(doc.tables || {})) if (Array.isArray(rows)) b.tables[tk] = new Map(rows.map(r => [r.id, JSON.stringify(r)]));
+    for (const [k, v] of Object.entries(doc.settings || {})) b.settings[k] = JSON.stringify(blankish(v));
+    for (const k of PROP_KEYS) b.properties[k] = JSON.stringify(blankish(propValue(doc.properties || {}, k)));
+    return b;
+  }
+  // Stamp everything that differs from the baseline with one new stamp. Returns true if any.
+  function stampDiff(doc, base, actor) {
+    let stamp = null, sy = null;
+    const st = () => stamp || (stamp = newStamp(sy, actor));
+    const sub = (o, k) => o[k] || (o[k] = {});
+    sy = syncOf(doc);
+    for (const [tk, rows] of Object.entries(doc.tables || {})) {
+      if (!Array.isArray(rows)) continue;
+      const was = base.tables[tk] || new Map();
+      const seen = new Set();
+      for (const r of rows) {
+        seen.add(r.id);
+        const j = JSON.stringify(r), bj = was.get(r.id);
+        if (bj === j) continue;
+        if (bj === undefined) {
+          sub(sy.rows, tk)[r.id] = st();
+          if (sy.fields[tk]) delete sy.fields[tk][r.id];
+          if (sy.deleted[tk]) delete sy.deleted[tk][r.id];
+          continue;
+        }
+        const old = JSON.parse(bj);
+        for (const k of new Set([...Object.keys(old), ...Object.keys(r)])) {
+          if (k !== 'id' && !sameVal(old[k], r[k])) sub(sub(sy.fields, tk), r.id)[k] = st();
+        }
+      }
+      for (const id of was.keys()) {
+        if (seen.has(id)) continue;
+        sub(sy.deleted, tk)[id] = st();
+        if (sy.rows[tk]) delete sy.rows[tk][id];
+        if (sy.fields[tk]) delete sy.fields[tk][id];
+      }
+    }
+    for (const k of new Set([...Object.keys(base.settings), ...Object.keys(doc.settings || {})])) {
+      if ((base.settings[k] ?? 'null') !== JSON.stringify(blankish(doc.settings?.[k]))) sy.settings[k] = st();
+    }
+    for (const k of PROP_KEYS) {
+      if (base.properties[k] !== JSON.stringify(blankish(propValue(doc.properties || {}, k)))) sy.properties[k] = st();
+    }
+    return !!stamp;
+  }
+  // Remove stamps for rows and fields that no longer exist (after a migration).
+  function pruneSync(doc) {
+    const sy = doc.sync;
+    if (!sy || typeof sy !== 'object') return;
+    for (const part of ['rows', 'fields']) {
+      for (const [tk, byId] of Object.entries(sy[part] || {})) {
+        const rows = Array.isArray(doc.tables?.[tk]) ? new Map(doc.tables[tk].map(r => [r.id, r])) : null;
+        if (!rows) { delete sy[part][tk]; continue; }
+        for (const id of Object.keys(byId)) {
+          const r = rows.get(id);
+          if (!r) { delete byId[id]; continue; }
+          if (part === 'fields') for (const k of Object.keys(byId[id])) if (!(k in r)) delete byId[id][k];
+        }
+      }
+    }
+  }
+  // The seal is a fingerprint of the data written with the stamps. A copy whose data no longer
+  // matches its seal was changed by a core that does not stamp, so its stamps are not trusted
+  // ("unsure") until it has been combined.
+  function sealDoc(doc) { if (doc?.sync && typeof doc.sync === 'object') doc.sync.seal = dataHash(doc); }
+  function markUnsure(doc) {
+    const sy = doc?.sync;
+    if (sy && typeof sy === 'object' && sy.seal && sy.seal !== dataHash(doc)) sy.unsure = true;
+  }
+  const isUnsure = doc => !!(doc?.sync && (doc.sync.unsure || (doc.sync.seal && doc.sync.seal !== dataHash(doc))));
+  // A new editing session: a new actor, and the open document as its baseline.
+  function newSession() {
+    S.actor = { id: uid(6), n: 0, by: currentUser };
+    setBaseline();
+  }
+  function setBaseline() {
+    S.baseline = S.data ? takeBaseline(S.data) : null;
+    S.baselineFor = S.data;
+  }
+  // Stamp the open document's changes since the last stamp. Called before every download,
+  // export, hand-off, recovery copy and combine; an edit undone before then is never stamped.
+  function stampPending() {
+    if (!S.data || S.readOnly || !S.baseline || S.baselineFor !== S.data) return false;
+    if (!S.actor) S.actor = { id: uid(6), n: 0, by: currentUser };
+    const changed = stampDiff(S.data, S.baseline, S.actor);
+    if (changed) setBaseline();
+    sealDoc(S.data);
+    return changed;
+  }
+
+  // ── Combining copies ───────────────────────────────────────────────────
+  // combineDocs(ours, theirs) works on two envelopes of this tool at the current schema and
+  // changes neither. For each value: if their clock covers our stamp, they saw our value and
+  // changed it later, so theirs wins; if ours covers theirs, ours wins; otherwise both changed
+  // it independently, which is a conflict only when the values differ. A base (the copy both
+  // started from) settles differences that the stamps cannot, such as edits by older cores.
+  function combineDocs(ours, theirs, { base = null } = {}) {
+    const out = clone(ours), B = clone(theirs);
+    const so = syncOf(out), sb = syncOf(B);
+    const sa = clone(so); // our stamps as they were, for decisions
+    // An unsure copy may hold edits its stamps do not show, so its values never lose silently.
+    const ua = isUnsure(ours), ub = isUnsure(theirs);
+    const conflicts = [], changes = [], lost = {};
+    const sub = (o, k) => o[k] || (o[k] = {});
+    const baseRows = tk => (base && Array.isArray(base.tables?.[tk]) ? new Map(base.tables[tk].map(r => [r.id, r])) : null);
+    function decide(va, vb, xa, xb, hasBase, vbase) {
+      if (sameVal(va, vb)) return { take: 'a', stamp: covers(sa.clock, xb) ? xa : covers(sb.clock, xa) ? xb : xa > xb ? xa : xb };
+      if (hasBase) {
+        if (xa === xb) return sameVal(va, vbase) ? { take: 'b', stamp: xb } : sameVal(vb, vbase) ? { take: 'a', stamp: xa } : { conflict: true };
+        // A genesis stamp with a value that differs from the base is an edit an older core made.
+        if (xa === GENESIS && !sameVal(va, vbase) && !sameVal(vb, vbase)) return { conflict: true };
+        if (xb === GENESIS && !sameVal(vb, vbase) && !sameVal(va, vbase)) return { conflict: true };
+      }
+      if (xa === xb) return { conflict: true, unstamped: true };
+      // With a base, an unchanged value on the unsure side shows it holds no hidden edit.
+      if (covers(sb.clock, xa)) return ua && !(hasBase && sameVal(va, vbase)) ? { conflict: true, unstamped: true } : { take: 'b', stamp: xb };
+      if (covers(sa.clock, xb)) return ub && !(hasBase && sameVal(vb, vbase)) ? { conflict: true, unstamped: true } : { take: 'a', stamp: xa };
+      return { conflict: true };
+    }
+    function setFieldStamp(tk, id, k, st) {
+      if (st === (so.rows[tk]?.[id] || GENESIS)) { if (so.fields[tk]?.[id]) delete so.fields[tk][id][k]; }
+      else sub(sub(so.fields, tk), id)[k] = st;
+    }
+    function copyRowStamps(tk, id) {
+      if (sb.rows[tk]?.[id]) sub(so.rows, tk)[id] = sb.rows[tk][id]; else if (so.rows[tk]) delete so.rows[tk][id];
+      if (sb.fields[tk]?.[id]) sub(so.fields, tk)[id] = clone(sb.fields[tk][id]); else if (so.fields[tk]) delete so.fields[tk][id];
+    }
+    function dropRowStamps(tk, id) { if (so.rows[tk]) delete so.rows[tk][id]; if (so.fields[tk]) delete so.fields[tk][id]; }
+    const keep = (tk, row) => { sub(lost, tk)[row.id] = clone(row); };
+
+    const tks = [...new Set([...Object.keys(out.tables || {}), ...Object.keys(B.tables || {})])];
+    out.tables = out.tables || {};
+    for (const tk of tks) {
+      const rb = Array.isArray(B.tables?.[tk]) ? B.tables[tk] : null;
+      if (!rb) continue;
+      if (!Array.isArray(out.tables[tk])) out.tables[tk] = [];
+      const ra = out.tables[tk];
+      const mapA = new Map(ra.map(r => [r.id, r])), mapB = new Map(rb.map(r => [r.id, r])), mapBase = baseRows(tk);
+      const onlyOne = (id, side, row) => {
+        const [sx, sy2] = side === 'a' ? [sa, sb] : [sb, sa];
+        const tomb = sy2.deleted[tk]?.[id];
+        const baseRow = mapBase?.get(id);
+        let verdict;
+        if (tomb) {
+          if (covers(sx.clock, tomb)) verdict = 'keep'; // put back after the deletion was seen
+          else if (rowStamps(sx, tk, id).some(x => !covers(sy2.clock, x))) verdict = 'deletedEdited';
+          else verdict = 'drop';
+        } else {
+          const rs = sx.rows[tk]?.[id];
+          if (rs && covers(sy2.clock, rs)) verdict = 'vanished'; // deleted by a core that leaves no trace
+          else if (baseRow) verdict = JSON.stringify(baseRow) === JSON.stringify(row) ? 'drop' : 'vanished';
+          else verdict = 'keep';
+        }
+        if (verdict === 'keep') {
+          if (side === 'b') { ra.push(clone(row)); copyRowStamps(tk, id); changes.push({ kind: 'added', table: tk, id }); }
+          if (so.deleted[tk]) delete so.deleted[tk][id];
+        } else if (verdict === 'drop') {
+          if (side === 'a') {
+            keep(tk, row);
+            out.tables[tk] = out.tables[tk].filter(r => r.id !== id);
+            dropRowStamps(tk, id);
+            changes.push({ kind: 'deleted', table: tk, id, row: clone(row) });
+          } else keep(tk, row);
+          sub(so.deleted, tk)[id] = tomb || so.deleted[tk]?.[id] || GENESIS;
+        } else {
+          keep(tk, row);
+          conflicts.push({ kind: 'row', table: tk, id, has: side, reason: verdict, row: clone(row),
+            stamps: { rows: sx.rows[tk]?.[id] || null, fields: clone(sx.fields[tk]?.[id] || null) }, tomb: tomb || null });
+        }
+      };
+      for (const row of rb) {
+        const mine = mapA.get(row.id);
+        if (!mine) { onlyOne(row.id, 'b', row); continue; }
+        const baseRow = mapBase?.get(row.id);
+        for (const k of new Set([...Object.keys(mine), ...Object.keys(row)])) {
+          if (k === 'id') continue;
+          const d = decide(mine[k], row[k], stampOf(sa, tk, row.id, k), stampOf(sb, tk, row.id, k), !!baseRow, baseRow?.[k]);
+          if (d.conflict) { conflicts.push({ kind: 'field', table: tk, id: row.id, field: k, a: clone(mine[k]), b: clone(row[k]), xa: stampOf(sa, tk, row.id, k), xb: stampOf(sb, tk, row.id, k), unstamped: !!d.unstamped }); continue; }
+          if (d.take === 'b' && !sameVal(mine[k], row[k])) {
+            changes.push({ kind: 'changed', table: tk, id: row.id, field: k, from: clone(mine[k]), to: clone(row[k]) });
+            if (row[k] === undefined) delete mine[k]; else mine[k] = clone(row[k]);
+          }
+          setFieldStamp(tk, row.id, k, d.stamp);
+        }
+      }
+      for (const row of ra.slice()) if (!mapB.has(row.id)) onlyOne(row.id, 'a', row);
+      // Deletions both sides know about.
+      const present = new Set(out.tables[tk].map(r => r.id));
+      for (const [id, st] of Object.entries(sb.deleted[tk] || {})) if (!present.has(id) && !so.deleted[tk]?.[id]) sub(so.deleted, tk)[id] = st;
+    }
+
+    // Settings and document properties: the same rule per key.
+    const record = (kind, keys, get, set, stA, stB, baseGet) => {
+      for (const k of keys) {
+        const va = get(out, k), vb = get(B, k);
+        const xa = stA[k] || GENESIS, xb = stB[k] || GENESIS;
+        const d = decide(va, vb, xa, xb, !!base, base ? baseGet(k) : null);
+        if (d.conflict) { conflicts.push({ kind, key: k, a: clone(va), b: clone(vb), xa, xb, unstamped: !!d.unstamped }); continue; }
+        if (d.take === 'b' && !sameVal(va, vb)) { changes.push({ kind, key: k, from: clone(va), to: clone(vb) }); set(out, k, clone(vb)); }
+        if (d.stamp === GENESIS) delete stA[k]; else stA[k] = d.stamp;
+      }
+    };
+    out.settings = out.settings || {};
+    record('setting', [...new Set([...Object.keys(out.settings), ...Object.keys(B.settings || {})])],
+      (d, k) => d.settings?.[k], (d, k, v) => { d.settings[k] = v; }, so.settings, sb.settings, k => base.settings?.[k]);
+    out.properties = out.properties || {};
+    record('property', PROP_KEYS, (d, k) => propValue(d.properties || {}, k), (d, k, v) => setPropValue(d.properties, k, v),
+      so.properties, sb.properties, k => propValue(base.properties || {}, k));
+    if (!out.properties.createdBy && B.properties?.createdBy) out.properties.createdBy = B.properties.createdBy;
+    // Issued revisions: combined by revision code.
+    const revs = Array.isArray(out.properties.revisions) ? out.properties.revisions : (out.properties.revisions = []);
+    let addedRev = false;
+    for (const r of Array.isArray(B.properties?.revisions) ? B.properties.revisions : []) {
+      const mine = revs.find(x => x.rev === r.rev);
+      if (!mine) { revs.push(clone(r)); addedRev = true; changes.push({ kind: 'revision', key: r.rev, to: clone(r) }); }
+      else if (JSON.stringify(mine) !== JSON.stringify(r)) conflicts.push({ kind: 'revision', key: r.rev, a: clone(mine), b: clone(r) });
+    }
+    if (addedRev) revs.sort((x, y) => String(x.date || '').localeCompare(String(y.date || ''))); // oldest first
+
+    // Clocks, sessions and history.
+    for (const [a, n] of Object.entries(sb.clock)) so.clock[a] = Math.max(so.clock[a] || 0, n);
+    for (const [a, who] of Object.entries(sb.actors)) {
+      const mine = so.actors[a];
+      if (!mine || String(who.at || '') > String(mine.at || '')) so.actors[a] = clone(who);
+    }
+    out.meta = out.meta || {};
+    const bm = B.meta || {};
+    out.meta.revision = Math.max(out.meta.revision || 0, bm.revision || 0);
+    if (bm.created && (!out.meta.created || bm.created < out.meta.created)) out.meta.created = bm.created;
+    const seenMig = new Set((out.meta.migrations || []).map(m => JSON.stringify(m)));
+    for (const m of bm.migrations || []) if (!seenMig.has(JSON.stringify(m))) (out.meta.migrations ||= []).push(m);
+    delete so.unsure; // every difference is now settled by a stamp or a choice
+    return { doc: out, theirs: B, conflicts, changes, lost };
+  }
+  // Apply the choices for a combine's conflicts ('a' ours, 'b' theirs). Each choice gets a new
+  // stamp that covers both sides, so the same conflict never comes back.
+  function resolveCombine(res, picks, actor) {
+    const out = res.doc, so = syncOf(out);
+    let stamp = null;
+    const st = () => stamp || (stamp = newStamp(so, actor));
+    const sub = (o, k) => o[k] || (o[k] = {});
+    res.conflicts.forEach((c, i) => {
+      const pick = picks[i];
+      if (pick !== 'a' && pick !== 'b') throw new Error('Every conflict needs a choice.');
+      const theirs = pick === 'b';
+      if (c.kind === 'field') {
+        const row = out.tables[c.table].find(r => r.id === c.id);
+        if (!row) return;
+        const v = theirs ? c.b : c.a;
+        if (theirs && !sameVal(c.a, c.b)) res.changes.push({ kind: 'changed', table: c.table, id: c.id, field: c.field, from: clone(c.a), to: clone(c.b), decided: true });
+        if (v === undefined) delete row[c.field]; else row[c.field] = clone(v);
+        sub(sub(so.fields, c.table), c.id)[c.field] = st();
+      } else if (c.kind === 'setting' || c.kind === 'property') {
+        const v = theirs ? c.b : c.a;
+        if (theirs) res.changes.push({ kind: c.kind, key: c.key, from: clone(c.a), to: clone(c.b), decided: true });
+        if (c.kind === 'setting') { out.settings[c.key] = clone(v); so.settings[c.key] = st(); }
+        else { setPropValue(out.properties, c.key, clone(v)); so.properties[c.key] = st(); }
+      } else if (c.kind === 'revision') {
+        if (theirs) {
+          const i2 = out.properties.revisions.findIndex(r => r.rev === c.key);
+          out.properties.revisions[i2] = clone(c.b);
+          res.changes.push({ kind: 'revision', key: c.key, to: clone(c.b), decided: true });
+        }
+      } else if (c.kind === 'row') {
+        const keepRow = (c.has === 'a') !== theirs; // the side that has the row was chosen
+        const rows = out.tables[c.table];
+        const at = rows.findIndex(r => r.id === c.id);
+        if (keepRow) {
+          if (at < 0) {
+            rows.push(clone(c.row));
+            if (c.stamps.rows) sub(so.rows, c.table)[c.id] = c.stamps.rows;
+            if (c.stamps.fields) sub(so.fields, c.table)[c.id] = clone(c.stamps.fields);
+            res.changes.push({ kind: 'added', table: c.table, id: c.id, decided: true });
+          }
+          if (so.deleted[c.table]) delete so.deleted[c.table][c.id];
+          if (c.reason === 'vanished') {
+            // Keep each field's stamp, then mark the row as added again so it is not lost next time.
+            const row = rows.find(r => r.id === c.id);
+            for (const k of Object.keys(row)) if (k !== 'id') sub(sub(so.fields, c.table), c.id)[k] = stampOf(so, c.table, c.id, k);
+            sub(so.rows, c.table)[c.id] = st();
+          }
+        } else {
+          if (at >= 0) { rows.splice(at, 1); res.changes.push({ kind: 'deleted', table: c.table, id: c.id, row: clone(c.row), decided: true }); }
+          if (so.rows[c.table]) delete so.rows[c.table][c.id];
+          if (so.fields[c.table]) delete so.fields[c.table][c.id];
+          sub(so.deleted, c.table)[c.id] = st();
+        }
+      }
+    });
+    return res;
+  }
+  // Pick the side whose change is newest. Blank times (no stamp) lose; ties keep ours.
+  function newestPick(c, res, ours) {
+    const sa = ours.sync || {}, sb = res.theirs.sync || {};
+    const fileTime = d => String(d.meta?.savedAt || '');
+    let ta, tb;
+    if (c.kind === 'row') {
+      const [sx, sy2] = c.has === 'a' ? [sa, sb] : [sb, sa];
+      const tHas = [c.stamps.rows, ...Object.values(c.stamps.fields || {})].map(x => stampTime(sx, x)).sort().pop() || '';
+      const tOther = (c.tomb && stampTime(sy2, c.tomb)) || fileTime(c.has === 'a' ? res.theirs : ours);
+      [ta, tb] = c.has === 'a' ? [tHas, tOther] : [tOther, tHas];
+    } else if (c.kind === 'revision') {
+      [ta, tb] = [String(c.a.date || ''), String(c.b.date || '')];
+    } else {
+      ta = stampTime(sa, c.xa) || fileTime(ours);
+      tb = stampTime(sb, c.xb) || fileTime(res.theirs);
+    }
+    return tb > ta ? 'b' : 'a';
+  }
+  // Bring another copy to the current schema so it can be combined with the open document.
+  function prepareOther(doc) {
+    checkEnvelope(doc);
+    doc = clone(doc);
+    markUnsure(doc);
+    const trusted = !!doc.sync && !isUnsure(doc);
+    doc.app = doc.app || { id: S.app.id, schemaVersion: 1 };
+    if ((doc.app.schemaVersion || 1) > S.app.schemaVersion) {
+      throw new Error(`It was saved by a newer version of ${S.app.name} (v${doc.app.version || '?'}, schema ${doc.app.schemaVersion}). Open both copies in the latest version of the tool and combine them there.`);
+    }
+    if ((doc.app.schemaVersion || 1) < S.app.schemaVersion) doc = migrate(doc);
+    normalise(doc);
+    if (trusted) sealDoc(doc); // filling in defaults is not an edit
+    return doc;
+  }
+  // Rows each copy created separately for the same thing in a table that a textToRef migration
+  // fills (older cores gave those rows random ids, so one site could get two ids).
+  function sameRowCandidates(ours, theirs) {
+    const out = [];
+    const norm = v => String(v ?? '').trim().toLowerCase();
+    const targets = new Map();
+    for (const m of S.spec?.migrations || []) for (const st of m.steps || []) if (st.op === 'textToRef' && S.app.tables[st.target]) targets.set(st.target, st.match);
+    for (const [tk, match] of targets) {
+      const a = ours.tables[tk] || [], b = theirs.tables[tk] || [];
+      const inA = new Set(a.map(r => r.id)), inB = new Set(b.map(r => r.id));
+      const group = (rows, other) => {
+        const m = new Map();
+        for (const r of rows) if (!other.has(r.id) && norm(r[match])) (m.get(norm(r[match])) || m.set(norm(r[match]), []).get(norm(r[match]))).push(r);
+        return m;
+      };
+      const ga = group(a, inB), gb = group(b, inA);
+      for (const [k, list] of gb) {
+        const mine = ga.get(k);
+        if (mine?.length === 1 && list.length === 1) out.push({ table: tk, field: match, value: mine[0][match], ours: mine[0].id, theirs: list[0].id });
+      }
+    }
+    return out;
+  }
+  // Give rows of a document new ids (map: old id -> new id), with every link and stamp.
+  function remapRows(doc, tk, map) {
+    for (const r of doc.tables[tk] || []) if (map[r.id]) r.id = map[r.id];
+    for (const [t2, td] of Object.entries(S.app.tables)) for (const c of Object.values(td.columns)) {
+      if (c.type !== 'ref' || c.table !== tk) continue;
+      for (const r of doc.tables[t2] || []) if (map[r[c.key]]) r[c.key] = map[r[c.key]];
+    }
+    const sy = doc.sync;
+    if (sy) for (const part of ['rows', 'fields', 'deleted']) {
+      const byId = sy[part]?.[tk];
+      if (!byId) continue;
+      for (const [from, to] of Object.entries(map)) if (from in byId) { byId[to] = byId[from]; delete byId[from]; }
+    }
+    if (doc.sync) sealDoc(doc);
+  }
+  function joinRows(theirs, joins) {
+    const byTable = {};
+    for (const j of joins) (byTable[j.table] ||= {})[j.theirs] = j.ours;
+    for (const [tk, map] of Object.entries(byTable)) remapRows(theirs, tk, map);
+  }
+  // Ask whether rows both copies created separately are the same. Resolves the chosen joins, or null.
+  function sameRowsDialog(joins) {
+    const on = joins.map(() => true);
+    let seq = 0;
+    const byTable = new Map();
+    joins.forEach((j, i) => (byTable.get(j.table) || byTable.set(j.table, []).get(j.table)).push([j, i]));
+    const body = h('div', { class: 'ca-form' },
+      h('p', 'Both copies created these rows separately, probably when each copy was upgraded to a newer version of the tool. Rows that are the same thing are joined, and their links follow.'),
+      [...byTable].map(([tk, list]) => {
+        const td = S.app.tables[tk];
+        return h('fieldset', { class: 'ca-conflict' }, h('legend', `${td.label}: the same ${td.singular} in both copies`),
+          list.map(([j, i]) => {
+            const id = `ca-sr-${dialogSeq}-${++seq}`;
+            return h('label', { class: 'ca-choice', for: id }, h('input', { type: 'checkbox', id, checked: true, onchange: e => { on[i] = e.target.checked; } }),
+              h('span', { class: 'ca-choice-main' }, String(j.value)));
+          }));
+      }));
+    return dialog({ title: 'Join rows that are the same', body, wide: true,
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Continue', primary: true, onClick: () => joins.filter((_, i) => on[i]) }] });
+  }
+  // Things no single value shows: links to deleted rows, repeated unique values (often the same
+  // next reference given in both copies) and rows both copies created for the same thing.
+  function combineIssues(doc, res, ours) {
+    const issues = [];
+    const inOurs = new Map(Object.entries(ours.tables || {}).map(([k, rows]) => [k, new Set((rows || []).map(r => r.id))]));
+    const inTheirs = new Map(Object.entries(res.theirs.tables || {}).map(([k, rows]) => [k, new Set((rows || []).map(r => r.id))]));
+    const fromTheirsOnly = (tk, id) => !inOurs.get(tk)?.has(id) && inTheirs.get(tk)?.has(id);
+    // Links to rows that are not there.
+    const missing = new Map();
+    for (const [tk, td] of Object.entries(S.app.tables)) {
+      for (const c of Object.values(td.columns)) {
+        if (c.type !== 'ref' || !S.app.tables[c.table]) continue;
+        const ids = new Set((doc.tables[c.table] || []).map(r => r.id));
+        for (const r of doc.tables[tk] || []) {
+          const v = r[c.key];
+          if (!v || ids.has(v)) continue;
+          const key = `${c.table}/${v}`;
+          if (!missing.has(key)) missing.set(key, { kind: 'link', table: c.table, id: v, row: res.lost[c.table]?.[v] || null, links: [] });
+          missing.get(key).links.push({ table: tk, id: r.id, field: c.key });
+        }
+      }
+    }
+    issues.push(...missing.values());
+    // Repeated unique values, and rows both copies added for the same thing.
+    const targets = new Map();
+    for (const m of S.spec?.migrations || []) for (const st of m.steps || []) if (st.op === 'textToRef') targets.set(st.target, st.match);
+    const norm = v => String(v ?? '').trim().toLowerCase();
+    for (const [tk, td] of Object.entries(S.app.tables)) {
+      const rows = doc.tables[tk] || [];
+      const cols = Object.values(td.columns).filter(c => c.unique && c.type !== 'computed').map(c => c.key);
+      if (targets.has(tk) && !cols.includes(targets.get(tk))) cols.push(targets.get(tk));
+      for (const k of cols) {
+        const groups = new Map();
+        for (const r of rows) { const v = norm(r[k]); if (v) (groups.get(v) || groups.set(v, []).get(v)).push(r); }
+        for (const g of groups.values()) {
+          if (g.length < 2) continue;
+          const ours2 = g.filter(r => !fromTheirsOnly(tk, r.id)), theirs2 = g.filter(r => fromTheirsOnly(tk, r.id));
+          if (!theirs2.length || !ours2.length) continue;
+          const value = String(g[0][k]);
+          const m = /^(.*?)(\d+)$/.exec(value);
+          issues.push({ kind: 'duplicate', table: tk, field: k, value, keepId: ours2[0]?.id || g[0].id, others: theirs2.map(r => r.id), canRenumber: !!m && td.columns[k]?.type !== 'ref' });
+        }
+      }
+    }
+    return issues;
+  }
+  // Apply the chosen fix for each issue to the combined document. Returns change entries.
+  function fixIssues(doc, issues, picks) {
+    const changes = [];
+    const rowOf = (tk, id) => (doc.tables[tk] || []).find(r => r.id === id);
+    issues.forEach((is, i) => {
+      const pick = picks[i];
+      if (is.kind === 'link') {
+        if (pick === 'restore' && is.row) { doc.tables[is.table].push(clone(is.row)); changes.push({ kind: 'added', table: is.table, id: is.id, decided: true }); }
+        else if (pick === 'clear') for (const l of is.links) { const r = rowOf(l.table, l.id); if (r) { changes.push({ kind: 'changed', table: l.table, id: l.id, field: l.field, from: r[l.field], to: null, decided: true }); r[l.field] = null; } }
+      } else if (is.kind === 'duplicate') {
+        if (pick === 'renumber') {
+          const m = /^(.*?)(\d+)$/.exec(is.value);
+          const used = new Set((doc.tables[is.table] || []).map(r => String(r[is.field] ?? '').toLowerCase()));
+          let n = Math.max(0, ...(doc.tables[is.table] || []).map(r => { const x = new RegExp(`^${m[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`, 'i').exec(String(r[is.field] ?? '')); return x ? +x[1] : 0; }));
+          for (const id of is.others) {
+            let next;
+            do { n++; next = m[1] + String(n).padStart(m[2].length, '0'); } while (used.has(next.toLowerCase()));
+            used.add(next.toLowerCase());
+            const r = rowOf(is.table, id);
+            if (r) { changes.push({ kind: 'changed', table: is.table, id, field: is.field, from: r[is.field], to: next, decided: true }); r[is.field] = next; }
+          }
+        } else if (pick === 'join') {
+          const keepRow = rowOf(is.table, is.keepId);
+          for (const id of is.others) {
+            const other = rowOf(is.table, id);
+            if (!other || !keepRow || id === is.keepId) continue;
+            for (const [k, v] of Object.entries(other)) if (k !== 'id' && blankish(keepRow[k]) == null && blankish(v) != null) keepRow[k] = clone(v);
+            for (const [tk, td] of Object.entries(S.app.tables)) for (const c of Object.values(td.columns)) {
+              if (c.type !== 'ref' || c.table !== is.table) continue;
+              for (const r of doc.tables[tk] || []) if (r[c.key] === id) r[c.key] = is.keepId;
+            }
+            doc.tables[is.table] = doc.tables[is.table].filter(r => r.id !== id);
+            changes.push({ kind: 'joined', table: is.table, id: is.keepId, other: id, decided: true });
+          }
+        }
+      }
+    });
+    return changes;
+  }
+
+  // ── Combining copies: in the tool ──────────────────────────────────────
+  // When a file opened or dropped on an open document is another copy of it, ask what to do.
+  async function askCombineOrOpen(doc, name) {
+    if (!S.data || S.readOnly || S.mode || !doc?.meta?.docId || doc.meta.docId !== S.data.meta.docId) return 'open';
+    if (doc.app?.id && doc.app.id !== S.app.id) return 'open';
+    return dialog({ title: `Combine ${name} with this document?`,
+      body: h('p', `${name} is another copy of the document you have open. Combine it to take in its changes, or open it in place of this one.`),
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Open instead', value: 'open' }, { label: 'Combine with this document', value: 'combine', primary: true }] });
+  }
+  async function readCopyFile(file) {
+    const text = await file.text();
+    return /\.json$/i.test(file.name) ? JSON.parse(text) : extractFromHtml(text);
+  }
+  // Ask for files. Resolves with the chosen files, or an empty list if none were chosen.
+  function chooseFiles({ multiple = false } = {}) {
+    return new Promise(resolve => {
+      const input = h('input', { type: 'file', accept: '.html,.htm,.json', multiple });
+      input.addEventListener('change', () => resolve([...input.files]));
+      input.addEventListener('cancel', () => resolve([]));
+      input.click();
+    });
+  }
+  async function pickCombine() {
+    const files = await chooseFiles({ multiple: true });
+    for (const f of files) {
+      let doc;
+      try { doc = await readCopyFile(f); } catch (e) { await alertDialog(`Could not read ${f.name}`, e.message); return; }
+      if (!(await combineWith(doc, f.name))) return;
+    }
+  }
+  // Combine another copy into the open document. Resolves true when it was combined.
+  async function combineWith(other, name) {
+    if (!S.data) return false;
+    if (S.readOnly) { await alertDialog('Read-only', 'This file was saved by a newer version of the tool, so other copies cannot be combined into it here.'); return false; }
+    if (other?.meta?.docId && other.meta.docId !== S.data.meta.docId) {
+      const ok = await confirmDialog('These look like two different documents',
+        `${name} is not a copy of this document, so its changes cannot be combined. Its rows can be added to this document instead.`, 'Add their rows');
+      return ok ? addRowsFrom(other, name) : false;
+    }
+    try { other = prepareOther(other); } catch (e) { await alertDialog(`Could not combine ${name}`, e.message); return false; }
+    stampPending();
+    const joins = sameRowCandidates(S.data, other);
+    if (joins.length) {
+      const chosen = await sameRowsDialog(joins);
+      if (!chosen) return false;
+      joinRows(other, chosen);
+    }
+    let base = null;
+    for (;;) {
+      const res = combineDocs(S.data, other, { base });
+      let picks = [];
+      if (res.conflicts.length) {
+        const out = await conflictDialog(res, name, !base);
+        if (!out) return false;
+        if (out.base) { base = out.base; continue; }
+        picks = out.picks;
+      }
+      return applyCombine(res, picks, name, other);
+    }
+  }
+  async function applyCombine(res, picks, name, other) {
+    const ours = S.data;
+    if (!res.changes.length && !res.conflicts.length) {
+      await alertDialog('Nothing new to combine', `${name} has no changes that this document does not already have.`);
+      return true;
+    }
+    resolveCombine(res, picks, S.actor);
+    const doc = res.doc;
+    doc.meta.combined = (doc.meta.combined || []).concat({ at: nowISO(), by: currentUser(), other: {
+      fileName: name, savedAt: other.meta?.savedAt || null, revision: other.meta?.revision ?? null, updatedBy: other.properties?.updatedBy || null } });
+    const issues = withDoc(doc, () => combineIssues(doc, res, ours));
+    let fixes = [];
+    const stamped = clone(doc);
+    if (issues.length) {
+      const picked = await issuesDialog(issues, doc);
+      if (!picked) return false;
+      fixes = fixIssues(doc, issues, picked);
+    }
+    mutate(d => {
+      for (const k of ['tables', 'settings', 'properties', 'meta', 'sync']) d[k] = doc[k];
+    }, { withSync: true });
+    // The combined values keep their own stamps; only the fixes above count as new edits here.
+    S.baseline = takeBaseline(stamped);
+    S.baselineFor = S.data;
+    stampPending();
+    const all = res.changes.concat(fixes);
+    const invalid = withDoc(S.data, () => invalidRows(all));
+    const n = k => all.filter(c => c.kind === k).length;
+    const count = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+    const decided = res.conflicts.length ? `, ${count(res.conflicts.length, 'choice', 'choices')} made` : '';
+    clearBanners('combine');
+    addBanner('combine', 'info', [
+      h('strong', 'Combined: '),
+      `${name}. ${count(n('changed') + n('setting') + n('property') + n('revision'), 'change', 'changes')} taken in, ${count(n('added'), 'row', 'rows')} added, ${count(n('deleted'), 'row', 'rows')} deleted${decided}.`,
+      invalid.length ? ` ${invalid.length} ${invalid.length === 1 ? 'row needs' : 'rows need'} attention: open ${invalid.length === 1 ? 'it' : 'them'} from Show what changed.` : '',
+      ` ${saveWord()} to keep the combined copy.`,
+      h('span', { class: 'ca-spacer' }),
+      h('button', { class: 'ca-btn', onclick: () => showCombineChanges(all, invalid, name) }, 'Show what changed'),
+      h('button', { class: 'ca-btn', onclick: () => { clearBanners('combine'); render(); } }, 'Dismiss')]);
+    render();
+    toast(`Combined with ${name}.`);
+    return true;
+  }
+  // Run fn with doc as the open document (for formatting and checks).
+  function withDoc(doc, fn) {
+    const prev = S.data;
+    S.data = doc;
+    try { return withCalc(fn); } finally { S.data = prev; }
+  }
+  // Rows touched by combining that now fail a check or a required field.
+  function invalidRows(changes) {
+    const out = [], seen = new Set();
+    for (const c of changes) {
+      if (!c.table || !S.app.tables[c.table] || c.kind === 'deleted') continue;
+      const key = `${c.table}/${c.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const row = rowById(c.table, c.id);
+      if (!row) continue;
+      const errs = validateRow(c.table, row);
+      if (Object.keys(errs).length) out.push({ table: c.table, id: c.id, message: Object.values(errs).join('; ') });
+    }
+    return out;
+  }
+  function combineAddRows(other) {
+    let added = 0;
+    for (const [tk, rows] of Object.entries(other.tables || {})) {
+      if (!S.app.tables[tk] || !Array.isArray(rows)) continue;
+      const have = new Set(S.data.tables[tk].map(r => r.id));
+      for (const r of rows) if (!have.has(r.id)) { S.data.tables[tk].push(clone(r)); added++; }
+    }
+    return added;
+  }
+  async function addRowsFrom(other, name) {
+    try { other = prepareOther(other); } catch (e) { await alertDialog(`Could not add rows from ${name}`, e.message); return false; }
+    let added = 0;
+    mutate(() => { added = combineAddRows(other); });
+    toast(`Added ${added} ${added === 1 ? 'row' : 'rows'} from ${name}.`);
+    return true;
+  }
+
+  // Text for values, rows and stamps in the combine dialogs.
+  function combineValueText(c, v) {
+    if (v == null || v === '') return 'Blank';
+    if (c.kind === 'field') {
+      if (!S.app.tables[c.table]?.columns[c.field]) return typeof v === 'object' ? JSON.stringify(v) : String(v);
+      return formatCell(c.table, { id: c.id, [c.field]: v }, c.field) || 'Blank';
+    }
+    if (c.kind === 'setting') return S.app.settings?.columns[c.key] ? formatCell('settings', { [c.key]: v }, c.key) || 'Blank' : String(v);
+    if (c.kind === 'property' && c.key === 'check') return v[0] ? `Checked by ${v[0]}${v[1] ? ', ' + fmtDateTime(v[1]) : ''}` : 'Not checked';
+    if (c.kind === 'revision') return [v.rev, v.date, v.description, v.by].filter(Boolean).join(', ');
+    return String(v);
+  }
+  const PROP_LABELS = { projectNumber: 'Project number', projectName: 'Project name', check: 'Check' };
+  function combineRowLabel(tk, id, row) {
+    const td = S.app.tables[tk];
+    const r = row || rowById(tk, id);
+    const name = td && r ? displayOf(tk, r) : '';
+    return `${td ? td.singular.replace(/^./, x => x.toUpperCase()) : tk} ${name || id}`;
+  }
+  function combineWhatText(c) {
+    if (c.kind === 'field') return `${combineRowLabel(c.table, c.id)}: ${S.app.tables[c.table]?.columns[c.field]?.label || c.field}`;
+    if (c.kind === 'setting') return `Setting: ${S.app.settings?.columns[c.key]?.label || c.key}`;
+    if (c.kind === 'property') return `Document properties: ${PROP_LABELS[c.key] || c.key}`;
+    if (c.kind === 'revision') return `Revision ${c.key}`;
+    return combineRowLabel(c.table, c.id, c.row);
+  }
+  function whoText(sy, st, doc) {
+    const who = st && st !== GENESIS ? sy?.actors?.[splitStamp(st)[0]] : null;
+    if (who) return `Changed by ${who.by || 'someone unnamed'}${who.at ? ', ' + fmtDateTime(who.at) : ''}`;
+    return doc?.meta?.savedAt ? `When not recorded (file saved ${fmtDateTime(doc.meta.savedAt)})` : 'When not recorded';
+  }
+
+  // Ask how to settle each conflict. Resolves { picks }, { base } or null (cancelled).
+  function conflictDialog(res, name, offerBase) {
+    const ours = S.data;
+    const picks = res.conflicts.map(() => null);
+    const radios = [];
+    const err = h('div', { class: 'ca-error', role: 'alert' });
+    const setAll = fn => { res.conflicts.forEach((c, i) => { picks[i] = fn(c); for (const r of radios[i]) r.checked = r.value === picks[i]; }); err.textContent = ''; };
+    const groups = new Map();
+    res.conflicts.forEach((c, i) => {
+      const g = c.table ? S.app.tables[c.table]?.label || c.table : c.kind === 'setting' ? 'Settings' : 'Document properties';
+      (groups.get(g) || groups.set(g, []).get(g)).push([c, i]);
+    });
+    let seq = 0;
+    const item = (c, i) => {
+      const nameAttr = `ca-cf-${dialogSeq}-${i}`;
+      const opt = (value, label, detail) => {
+        const id = `${nameAttr}-${++seq}`;
+        const input = h('input', { type: 'radio', name: nameAttr, id, value, onchange: () => { picks[i] = value; err.textContent = ''; } });
+        return [input, h('label', { class: 'ca-choice', for: id }, input, h('span', h('span', { class: 'ca-choice-main' }, label), h('span', { class: 'ca-choice-detail' }, detail)))];
+      };
+      let a, b, note = null;
+      if (c.kind === 'row') {
+        const mineHas = c.has === 'a';
+        const reasons = {
+          deletedEdited: mineHas ? 'Deleted in their copy, changed in yours.' : 'Deleted in your copy, changed in theirs.',
+          vanished: mineHas ? 'In your copy, missing from theirs (it may have been deleted with an older version of the tool).' : 'In their copy, missing from yours (it may have been deleted with an older version of the tool).',
+        };
+        note = reasons[c.reason];
+        const sx = mineHas ? ours.sync : res.theirs.sync;
+        const whoHas = whoText(sx, latestStamp(sx || {}, [c.stamps.rows, ...Object.values(c.stamps.fields || {})]) || GENESIS, mineHas ? ours : res.theirs);
+        a = opt('a', mineHas ? 'Keep the row (yours)' : 'Delete the row (yours)', mineHas ? whoHas : c.tomb ? whoText(ours.sync, c.tomb, ours) : 'Not in your copy');
+        b = opt('b', mineHas ? 'Delete the row (theirs)' : 'Keep the row (theirs)', mineHas ? (c.tomb ? whoText(res.theirs.sync, c.tomb, res.theirs) : 'Not in their copy') : whoHas);
+      } else if (c.kind === 'revision') {
+        a = opt('a', `Yours: ${combineValueText(c, c.a)}`, 'Revision details in your copy');
+        b = opt('b', `Theirs: ${combineValueText(c, c.b)}`, 'Revision details in their copy');
+      } else {
+        a = opt('a', `Yours: ${combineValueText(c, c.a)}`, whoText(ours.sync, c.xa, ours));
+        b = opt('b', `Theirs: ${combineValueText(c, c.b)}`, whoText(res.theirs.sync, c.xb, res.theirs));
+        if (c.unstamped) note = 'One copy was changed with an older version of the tool, so which change is newer is not known.';
+      }
+      radios[i] = [a[0], b[0]];
+      return h('fieldset', { class: 'ca-conflict' }, h('legend', combineWhatText(c)), note && h('p', { class: 'ca-muted' }, note), a[1], b[1]);
+    };
+    const body = withDoc(res.doc, () => h('div', { class: 'ca-form' },
+      h('p', `${res.conflicts.length} ${res.conflicts.length === 1 ? 'thing was' : 'things were'} changed in both your copy and ${name}. Choose which to keep for each.`),
+      h('div', { class: 'ca-actions', role: 'group', 'aria-label': 'Choose for every item' },
+        h('button', { class: 'ca-btn', type: 'button', onclick: () => setAll(() => 'a') }, 'Keep all yours'),
+        h('button', { class: 'ca-btn', type: 'button', onclick: () => setAll(() => 'b') }, 'Keep all theirs'),
+        h('button', { class: 'ca-btn', type: 'button', onclick: () => setAll(c => newestPick(c, res, ours)) }, 'Keep the newest')),
+      h('p', { class: 'ca-help' }, 'Keep the newest uses the dates shown under each choice, which come from the clocks of the computers used.'),
+      [...groups].map(([g, list]) => h('section', h('h3', { class: 'ca-subhead' }, g), list.map(([c, i]) => item(c, i)))),
+      err));
+    const unstamped = res.conflicts.some(c => c.unstamped || c.kind === 'row');
+    const buttons = [];
+    if (offerBase && unstamped) buttons.push({ label: 'Choose the copy you both started from…', left: true, onClick: async () => {
+      const [f] = await chooseFiles();
+      if (!f) return false;
+      try { return { base: prepareOther(await readCopyFile(f)) }; }
+      catch (e) { err.textContent = `Could not use ${f.name}: ${e.message}`; return false; }
+    } });
+    buttons.push({ label: 'Cancel', value: null });
+    buttons.push({ label: 'Combine copies', primary: true, onClick: () => {
+      const left = picks.filter(p => !p).length;
+      if (left) { err.textContent = `Choose which to keep for every item. ${left} ${left === 1 ? 'is' : 'are'} left.`; radios[picks.findIndex(p => !p)][0].focus(); return false; }
+      return { picks: picks.slice() };
+    } });
+    return dialog({ title: 'Combine copies', body, buttons, wide: true });
+  }
+  // Suggest fixes for problems in the combined document. Resolves the choices, or null.
+  function issuesDialog(issues, doc) {
+    const picks = issues.map(is => (is.kind === 'link' ? (is.row ? 'restore' : 'clear') : is.canRenumber ? 'renumber' : 'join'));
+    let seq = 0;
+    const body = withDoc(doc, () => h('div', { class: 'ca-form' },
+      h('p', 'The combined document has a few problems that no single change shows. Check the suggested fix for each.'),
+      issues.map((is, i) => {
+        const nameAttr = `ca-is-${dialogSeq}-${i}`;
+        const opt = (value, label) => {
+          const id = `${nameAttr}-${++seq}`;
+          const input = h('input', { type: 'radio', name: nameAttr, id, value, checked: picks[i] === value, onchange: () => { picks[i] = value; } });
+          return h('label', { class: 'ca-choice', for: id }, input, h('span', { class: 'ca-choice-main' }, label));
+        };
+        const td = S.app.tables[is.table];
+        if (is.kind === 'link') {
+          const what = is.row ? combineRowLabel(is.table, is.id, is.row) : `A ${td?.singular || 'row'}`;
+          return h('fieldset', { class: 'ca-conflict' },
+            h('legend', `${what} was deleted, but ${is.links.length} ${is.links.length === 1 ? 'row links' : 'rows link'} to it`),
+            is.row && opt('restore', `Put the ${td?.singular || 'row'} back`),
+            opt('clear', `Clear the ${is.links.length === 1 ? 'link' : 'links'}`),
+            opt('leave', 'Leave it as it is'));
+        }
+        const col = td?.columns[is.field];
+        return h('fieldset', { class: 'ca-conflict' },
+          h('legend', `${1 + is.others.length} ${td?.label.toLowerCase() || 'rows'} have the ${(col?.label || is.field).toLowerCase()} "${is.value}"`),
+          h('p', { class: 'ca-muted' }, 'Each copy added one. They may be the same thing.'),
+          is.canRenumber && opt('renumber', `Give theirs the next free ${(col?.label || is.field).toLowerCase()}`),
+          opt('join', `They are the same ${td?.singular || 'row'}: join them into one`),
+          opt('leave', 'Keep both as they are'));
+      })));
+    return dialog({ title: 'Check the combined document', body, wide: true,
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Apply and combine', primary: true, onClick: () => picks.slice() }] });
+  }
+  function showCombineChanges(changes, invalid, name) {
+    const openRow = (t, id) => { document.querySelector('dialog[open]')?.close(); if (rowById(t, id)) openForm(t, id); };
+    const line = c => {
+      const decided = c.decided ? ' (your choice)' : '';
+      if (c.kind === 'added') return [combineRowLabel(c.table, c.id), `Added${decided}`];
+      if (c.kind === 'deleted') return [combineRowLabel(c.table, c.id, c.row), `Deleted${decided}`];
+      if (c.kind === 'joined') return [combineRowLabel(c.table, c.id), `Joined with a matching row${decided}`];
+      if (c.kind === 'revision') return [`Revision ${c.key}`, `Taken in${decided}`];
+      const as = c.kind === 'changed' ? { ...c, kind: 'field' } : c;
+      return [combineWhatText(as), `${combineValueText(as, c.from)} to ${combineValueText(as, c.to)}${decided}`];
+    };
+    const shown = changes.slice(0, 500);
+    dialog({ title: `What changed when combining ${name}`, wide: true, body: h('div',
+      invalid.length ? h('div', h('h3', { class: 'ca-subhead' }, 'Rows that need attention'),
+        h('ul', invalid.map(x => h('li', h('button', { class: 'ca-btn link', type: 'button', onclick: () => openRow(x.table, x.id) }, combineRowLabel(x.table, x.id)), `: ${x.message}`)))) : null,
+      h('h3', { class: 'ca-subhead' }, 'Changes'),
+      !changes.length ? h('p', 'Nothing changed: the other copy had nothing new.')
+        : h('table', { class: 'ca-table' }, h('thead', h('tr', h('th', { scope: 'col' }, 'What'), h('th', { scope: 'col' }, 'Change'))),
+          h('tbody', shown.map(c => { const [a, b] = line(c); return h('tr', h('td', a), h('td', b)); }))),
+      changes.length > shown.length && h('p', { class: 'ca-muted' }, `And ${changes.length - shown.length} more.`)) });
+  }
+  // For scripts and tools/combine.mjs: combine two envelopes of this tool without any UI.
+  // prefer 'ours', 'theirs' or 'newest' settles conflicts; without it they are returned unsettled.
+  function combineApi(ours, theirs, { base = null, prefer = null } = {}) {
+    const a = prepareOther(ours), b = prepareOther(theirs), bs = base ? prepareOther(base) : null;
+    const joins = sameRowCandidates(a, b);
+    joinRows(b, joins);
+    const res = combineDocs(a, b, { base: bs });
+    const list = res.conflicts.map(c => ({ kind: c.kind, table: c.table || null, id: c.id || null, field: c.field || c.key || null, reason: c.reason || null, ours: c.kind === 'row' ? (c.has === 'a' ? 'row' : null) : c.a, theirs: c.kind === 'row' ? (c.has === 'b' ? 'row' : null) : c.b }));
+    if (prefer && res.conflicts.length) {
+      const picks = res.conflicts.map(c => (prefer === 'theirs' ? 'b' : prefer === 'newest' ? newestPick(c, res, a) : 'a'));
+      resolveCombine(res, picks, { id: uid(6), n: 0, by: currentUser });
+    }
+    const issues = withDoc(res.doc, () => combineIssues(res.doc, res, a)).map(is => (is.kind === 'link'
+      ? `${is.table} row ${is.id} was deleted, but ${is.links.length} ${is.links.length === 1 ? 'row links' : 'rows link'} to it`
+      : `${1 + is.others.length} ${is.table} rows have ${is.field} "${is.value}"`));
+    return { doc: res.doc, conflicts: list, issues, joined: joins.length, settled: !res.conflicts.length || !!prefer, changes: res.changes.length };
   }
 
   // ── Saving / exporting ─────────────────────────────────────────────────
@@ -720,8 +1644,11 @@
     const base = `${pn ? pn + ' ' : ''}${S.app.fileName || S.app.id}`;
     return base.replace(/[\\/:*?"<>|]+/g, '-') + '.html';
   }
-  function prepareForSave() {
-    const doc = clone(S.data);
+  // The document as it will be written. With no argument, the open document (its pending
+  // changes are stamped first).
+  function prepareForSave(src = null) {
+    if (!src) stampPending();
+    const doc = clone(src || S.data);
     doc.format = FORMAT;
     doc.app = { id: S.app.id, version: S.app.version, schemaVersion: S.app.schemaVersion };
     doc.meta.revision = (doc.meta.revision || 0) + 1;
@@ -729,6 +1656,7 @@
     doc.meta.coreVersion = CORE_VERSION;
     doc.properties.updatedBy = currentUser() || doc.properties.updatedBy || null;
     if (!doc.properties.createdBy) doc.properties.createdBy = doc.properties.updatedBy;
+    sealDoc(doc);
     return doc;
   }
   async function writeHandle(handle, text) {
@@ -850,7 +1778,7 @@
     }
   }
   async function importCsv(text, name) {
-    if (!S.data) S.data = newDocument();
+    if (!S.data) { S.data = newDocument(); newSession(); }
     if (S.readOnly) return alertDialog('Read-only', 'This file cannot be edited.');
     const grid = parseCsv(text);
     if (grid.length < 2) return alertDialog('Import CSV', 'The CSV file has no data rows.');
@@ -902,6 +1830,7 @@
     const w = window.open(u.href, '_blank');
     if (!w) return alertDialog('Pop-up blocked', `Allow pop-ups for this file, or open ${S.app.home} and load this file there.`);
     if (!S.data) return;
+    stampPending();
     const payload = { type: 'carryall:handoff', appId: S.app.id, fileName: S.fileName, data: clone(S.data) };
     const onMsg = e => {
       if (e.source !== w || e.data?.type !== 'carryall:ready') return;
@@ -921,6 +1850,9 @@
       const ok = await confirmDialog(`Load data from ${e.data.fileName || 'a saved copy'}?`,
         'A saved copy of this tool sent its data here. Only the data is loaded; nothing from the other file runs. After loading, use ' + saveWord() + ' and replace the original file with the new copy.', 'Load data');
       if (!ok) return;
+      const choice = await askCombineOrOpen(e.data.data, e.data.fileName || 'the saved copy');
+      if (choice === 'combine') return combineWith(e.data.data, e.data.fileName || 'the saved copy');
+      if (!choice) return;
       if (!(await guardDirty())) return;
       try { await loadDocument(e.data.data, { fileName: e.data.fileName, source: 'handoff' }); }
       catch (err) { alertDialog('Could not load data', err.message); }
@@ -1495,6 +2427,7 @@
     const menu = h('details', { class: 'ca-menu' }, h('summary', { class: 'ca-btn' }, 'More', h('span', { 'aria-hidden': 'true' }, ' ▾')), h('div', { class: 'ca-menu-list' },
       has && Object.entries(S.app.tables).map(([k, td]) => h('button', { onclick: () => exportCsv(k) }, `Export ${td.label} (CSV)`)),
       has && h('button', { onclick: exportJson }, 'Export data (JSON)'),
+      has && !S.readOnly && h('button', { onclick: pickCombine }, 'Combine with another copy…'),
       has && !S.readOnly && h('button', { onclick: () => h('input', { type: 'file', accept: '.csv', onchange: e => e.target.files[0]?.text().then(tx => importCsv(tx, e.target.files[0].name)) }).click() }, 'Import CSV…'),
       has && propsOn() && h('button', { onclick: () => openProperties() }, 'Document properties…'),
       has && h('button', { onclick: () => window.print() }, 'Print'),
@@ -1692,11 +2625,13 @@
         } catch (e) { ok(`fixture "${fx.name}"`, false, e.message); }
         finally { S.data = saved; }
       }
+      combineSelfTest(ok);
       if (S.data && !temp) {
         const html = buildFile(prepareForSave());
         const back = extractFromHtml(html);
         ok('export round-trip preserves data', JSON.stringify(back.tables) === JSON.stringify(S.data.tables) && JSON.stringify(back.settings) === JSON.stringify(S.data.settings));
         ok('export round-trip preserves document properties', JSON.stringify(back.properties.revisions) === JSON.stringify(S.data.properties.revisions) && back.properties.projectNumber === S.data.properties.projectNumber);
+        ok('export round-trip preserves change stamps', JSON.stringify(back.sync ?? null) === JSON.stringify(S.data.sync ?? null));
         ok('export contains core + app scripts', /id="ca-core"/.test(html) && /id="ca-app"/.test(html));
       }
     } catch (e) { ok('self-test crashed', false, e.stack || e.message); }
@@ -1708,6 +2643,65 @@
         body: h('table', { class: 'ca-table' }, h('tbody', res.map(r => h('tr', h('td', r.pass ? 'Pass' : UI.pill('Fail', 'red')), h('td', r.name), h('td', { class: 'ca-muted' }, r.detail))))) });
     }
     return { passed: res.length - failed.length, failed: failed.length, results: res };
+  }
+
+  // Combining copies: separate edits combine in either order, a repeat changes nothing, and
+  // copies of an old fixture upgraded separately still combine without conflicts.
+  function combineSelfTest(ok) {
+    const app = S.app;
+    const tk = Object.keys(app.tables)[0];
+    if (!tk) return;
+    const d0 = { format: FORMAT, app: { id: app.id, version: app.version, schemaVersion: app.schemaVersion }, meta: { docId: 'selftest', revision: 1 },
+      properties: {}, settings: {}, tables: Object.fromEntries(Object.keys(app.tables).map(k => [k, []])) };
+    d0.tables[tk] = [{ id: 'st1', zzOne: 1 }, { id: 'st2', zzOne: 2 }, { id: 'st3', zzOne: 3 }];
+    const fork = () => { const d = clone(d0); return { d, base: takeBaseline(d), actor: { id: uid(6), n: 0, by: () => 'Self-test' } }; };
+    const stamp = f => { stampDiff(f.d, f.base, f.actor); f.base = takeBaseline(f.d); return f.d; };
+    const tidy = d => JSON.stringify([Object.fromEntries(Object.entries(d.tables).map(([k, rows]) => [k,
+      rows.map(r => Object.fromEntries(Object.entries(r).sort(([x], [y]) => (x < y ? -1 : 1)))).sort((x, y) => (x.id < y.id ? -1 : 1))])), d.settings]);
+    const row = (d, id) => d.tables[tk].find(r => r.id === id);
+    const A = fork(), B = fork();
+    row(A.d, 'st1').zzA = 'A'; A.d.tables[tk].push({ id: 'stA', zzOne: 'added in A' }); A.d.settings.zzSetting = 1;
+    row(B.d, 'st1').zzB = 'B'; B.d.tables[tk].push({ id: 'stB', zzOne: 'added in B' }); B.d.tables[tk] = B.d.tables[tk].filter(r => r.id !== 'st2');
+    stamp(A); stamp(B);
+    const ab = combineDocs(A.d, B.d), ba = combineDocs(B.d, A.d);
+    ok('combining copies: separate changes combine with no conflicts', !ab.conflicts.length && !ba.conflicts.length, `${ab.conflicts.length} and ${ba.conflicts.length} conflicts`);
+    ok('combining copies: the order does not matter', tidy(ab.doc) === tidy(ba.doc));
+    ok('combining copies: every change is kept', row(ab.doc, 'st1')?.zzA === 'A' && row(ab.doc, 'st1')?.zzB === 'B' && row(ab.doc, 'stA') && row(ab.doc, 'stB') && !row(ab.doc, 'st2') && ab.doc.settings.zzSetting === 1);
+    const again = combineDocs(ab.doc, B.d);
+    ok('combining copies: combining the same copy again changes nothing', !again.conflicts.length && tidy(again.doc) === tidy(ab.doc));
+    const C = fork(), D = fork();
+    row(C.d, 'st1').zzOne = 'C'; row(D.d, 'st1').zzOne = 'D';
+    C.d.tables[tk] = C.d.tables[tk].filter(r => r.id !== 'st3'); row(D.d, 'st3').zzOne = 'changed in D';
+    stamp(C); stamp(D);
+    const cd = combineDocs(C.d, D.d);
+    ok('combining copies: a value changed in both is a conflict', cd.conflicts.length === 2 && cd.conflicts.some(c => c.kind === 'field') && cd.conflicts.some(c => c.kind === 'row' && c.reason === 'deletedEdited'),
+      cd.conflicts.map(c => c.kind + (c.reason ? ' ' + c.reason : '')).join(', '));
+    resolveCombine(cd, cd.conflicts.map(c => (c.kind === 'row' ? 'b' : 'a')), { id: uid(6), n: 0, by: () => 'Self-test' });
+    const cdd = combineDocs(cd.doc, D.d), cdc = combineDocs(cd.doc, C.d);
+    ok('combining copies: a settled conflict does not come back', !cdd.conflicts.length && !cdc.conflicts.length && row(cdd.doc, 'st1')?.zzOne === 'C' && row(cdc.doc, 'st3')?.zzOne === 'changed in D');
+    // Copies of an old fixture, each edited and upgraded on its own, must combine cleanly.
+    for (const fx of app.fixtures || []) {
+      if ((fx.doc.app?.schemaVersion || 1) >= app.schemaVersion) continue;
+      try {
+        const old = clone(fx.doc);
+        old.meta = { docId: 'selftest-' + fx.name };
+        const m1 = migrate(clone(old)), m2 = migrate(clone(old));
+        ok(`fixture "${fx.name}" upgrades to the same row ids every time`, JSON.stringify(m1.tables) === JSON.stringify(m2.tables));
+        const ot = Object.keys(old.tables || {}).find(k => Array.isArray(old.tables[k]) && old.tables[k].length);
+        if (!ot) continue;
+        const E = { d: clone(old) }, F = { d: clone(old) };
+        for (const f of [E, F]) { normalise(f.d); f.base = takeBaseline(f.d); f.actor = { id: uid(6), n: 0, by: () => 'Self-test' }; }
+        const id = E.d.tables[ot][0].id;
+        E.d.tables[ot][0].zzSelfTestE = 'E'; F.d.tables[ot][0].zzSelfTestF = 'F';
+        stamp(E); stamp(F);
+        const e2 = normalise(migrate(E.d)), f2 = normalise(migrate(F.d));
+        const r = combineDocs(e2, f2);
+        const both = Object.values(r.doc.tables).flat().find(x => x.id === id);
+        const count = d => Object.values(d.tables).reduce((n, rows) => n + (Array.isArray(rows) ? rows.length : 0), 0);
+        ok(`fixture "${fx.name}": copies upgraded separately combine cleanly`, !r.conflicts.length && both?.zzSelfTestE === 'E' && both?.zzSelfTestF === 'F' && count(r.doc) === count(e2),
+          r.conflicts.length ? `${r.conflicts.length} conflicts` : count(r.doc) !== count(e2) ? `${count(r.doc) - count(e2)} extra rows` : '');
+      } catch (e) { ok(`fixture "${fx.name}": copies upgraded separately combine cleanly`, false, e.message); }
+    }
   }
 
   // ── Formulas ───────────────────────────────────────────────────────────
@@ -2000,6 +2994,8 @@
     n.fn = name;
     const sig = FX_FNS[name];
     if (!sig) fail(FX_HINTS[n.name] ? `${n.raw}() is not available. ${FX_HINTS[n.name]}` : unknownMsg(`function ${n.raw}()`, name, Object.keys(FX_FNS)));
+    // Copies upgraded in different places must end up the same, so they can be combined.
+    if (sc.raw && (name === 'TODAY' || name === 'USER')) fail(`${name}() cannot be used in a migration step: every copy of a file must upgrade to the same data, whenever and by whoever it is opened`);
     const head = n.args[0] && n.args[0].t === 'path' ? n.args[0].parts : null;
     const tableForm = FX_TABLE_FNS.includes(name) && head && !!sc.sch.tables[head[0]];
     const anyTable = Object.keys(sc.sch.tables)[0] || 'table';
@@ -3203,25 +4199,48 @@
     });
     return def;
   }
+  // Each step also carries the change stamps (doc.sync) along with the values it moves, so
+  // copies upgraded in different places still combine. Steps never make stamps of their own.
   function runMigrationStep(doc, s, ctx) {
     const rows = t => (Array.isArray(doc.tables[t]) ? doc.tables[t] : []);
+    const sy = doc.sync && typeof doc.sync === 'object' ? doc.sync : null;
+    const fieldStamps = (t, id) => sy?.fields?.[t]?.[id] || null;
     switch (s.op) {
       case 'renameTable':
         if (Array.isArray(doc.tables[s.from])) { doc.tables[s.to] = rows(s.to).concat(doc.tables[s.from]); delete doc.tables[s.from]; }
+        if (sy) for (const part of ['rows', 'fields', 'deleted']) {
+          if (!sy[part]?.[s.from]) continue;
+          sy[part][s.to] = { ...(sy[part][s.to] || {}), ...sy[part][s.from] };
+          delete sy[part][s.from];
+        }
         break;
       case 'renameField':
-        for (const r of rows(s.table)) if (s.from in r) { if (r[s.to] == null) r[s.to] = r[s.from]; delete r[s.from]; }
+        for (const r of rows(s.table)) if (s.from in r) {
+          const f = fieldStamps(s.table, r.id);
+          if (r[s.to] == null) { r[s.to] = r[s.from]; if (f) { if (s.from in f) f[s.to] = f[s.from]; else delete f[s.to]; } }
+          delete r[s.from];
+          if (f) delete f[s.from];
+        }
         break;
       case 'removeField':
-        for (const r of rows(s.table)) delete r[s.field];
+        for (const r of rows(s.table)) { delete r[s.field]; const f = fieldStamps(s.table, r.id); if (f) delete f[s.field]; }
         break;
-      case 'setField':
+      case 'setField': {
+        // A calculated value takes the stamp of the most recent change to the fields it reads.
+        const reads = [...new Set([...fxNames(s.formula), ...fxNames(s.when)])];
         for (const r of rows(s.table)) {
           const cx = { raw: true, table: s.table, row: r, settings: doc.settings || {} };
           if (s.when && !fxTruthy(fxEval(s.when, cx))) continue;
+          const before = r[s.field];
           r[s.field] = s.formula ? fxEval(s.formula, cx) : clone(s.value);
+          if (!sy || sameVal(before, r[s.field])) continue;
+          const f = fieldStamps(s.table, r.id);
+          const st = latestStamp(sy, reads.map(k => f?.[k]).filter(Boolean));
+          if (st) ((sy.fields[s.table] ||= {})[r.id] ||= {})[s.field] = st;
+          else if (f) delete f[s.field];
         }
         break;
+      }
       case 'mapValues':
         for (const r of rows(s.table)) { const k = r[s.field]; if (k != null && Object.prototype.hasOwnProperty.call(s.map, String(k))) r[s.field] = s.map[String(k)]; }
         break;
@@ -3229,17 +4248,33 @@
         const target = doc.tables[s.target] = rows(s.target);
         const key = v => String(v ?? '').trim().toLowerCase();
         const byKey = new Map(target.map(x => [key(x[s.match]), x]));
+        const ids = new Set(target.map(x => x.id));
         for (const r of rows(s.table)) {
           let name = String(r[s.field] ?? '').trim();
+          const f = fieldStamps(s.table, r.id);
+          if (f) { if (s.field in f) f[s.to] = f[s.field]; else delete f[s.to]; if (s.field !== s.to) delete f[s.field]; }
           if (s.field !== s.to) delete r[s.field];
           if (!name) { if (s.blankValue == null) { r[s.to] = null; continue; } name = String(s.blankValue); }
           let hit = byKey.get(key(name));
-          if (!hit) { hit = { id: ctx.uid(), [s.match]: name }; target.push(hit); byKey.set(key(name), hit); }
+          if (!hit) {
+            // The same text gets the same new row id in every copy of the file.
+            let id = ctx.stableId ? ctx.stableId('textToRef', s.target, key(name)) : ctx.uid();
+            while (ids.has(id)) id = hashId(id);
+            ids.add(id);
+            hit = { id, [s.match]: name }; target.push(hit); byKey.set(key(name), hit);
+          }
           r[s.to] = hit.id;
         }
         break;
       }
     }
+  }
+  // The column names a formula reads (the first part of each name in it).
+  function fxNames(ast, out = []) {
+    if (!ast || typeof ast !== 'object') return out;
+    if (ast.t === 'path' && Array.isArray(ast.parts)) out.push(ast.parts[0]);
+    for (const v of Object.values(ast)) if (v && typeof v === 'object') Array.isArray(v) ? v.forEach(x => fxNames(x, out)) : fxNames(v, out);
+    return out;
   }
   // text -> { spec, def, problems }. def is set only when there are no errors.
   function specLoad(text, previous = null) {
@@ -3306,7 +4341,7 @@
       { table: 'areas', row: 'a1', field: 'open', equals: 1 },
     ] }],
   };
-  const STATE_KEYS = ['app', 'spec', 'data', 'dirty', 'readOnly', 'fileName', 'handle', 'undo', 'redo', 'tab', 'viewState', 'banners'];
+  const STATE_KEYS = ['app', 'spec', 'data', 'dirty', 'readOnly', 'fileName', 'handle', 'undo', 'redo', 'tab', 'viewState', 'banners', 'actor', 'baseline', 'baselineFor'];
   const saveState = () => Object.fromEntries(STATE_KEYS.map(k => [k, S[k]]));
   const restoreState = st => { for (const k of STATE_KEYS) S[k] = st[k]; };
 
@@ -3358,6 +4393,7 @@
     S.app = buildApp(b.result.def);
     S.spec = b.result.spec;
     S.data = newDocument();
+    newSession();
     Object.assign(S, { dirty: false, readOnly: false, fileName: null, handle: null, undo: [], redo: [], tab: 0, viewState: {}, banners: [] });
     S.mode = 'preview';
     render();
@@ -3676,6 +4712,9 @@
     selfTest,
     // Tool definitions (JSON): check one, or read it leniently. Used by the tool builder.
     checkDefinition: text => { const r = specLoad(text); return { ok: !!r.def, problems: r.problems, definition: r.spec || null }; },
+    // Combining copies of a document (see "Combining copies" in the README).
+    combine: combineApi,
+    fileText: doc => buildFile(prepareForSave(doc)),
     _state: S, // for debugging only; not a stable API
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

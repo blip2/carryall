@@ -324,6 +324,9 @@ An expectation is `{ "table", "row", "field", "equals" }` (add `"tolerance": 0.0
   when they are opened. Never edit or remove an existing migration.
 - Add a test with `"schemaVersion"` set to the old number and rows in the old shape, to prove the
   upgrade.
+- A migration must turn the same old file into the same new data wherever it is opened, so that
+  copies upgraded by different people can still be combined. `TODAY()` and `USER()` cannot be used in
+  migration steps. Rows that `textToRef` creates get the same id in every copy.
 
 ```json
 "migrations": [
@@ -352,8 +355,9 @@ A migration with `"steps": []` is fine when nothing needs converting.
 ## Built in to every tool
 
 Project number and name, created by, updated by, checked by (with a data fingerprint), revisions,
-undo, recovery of unsaved work, CSV import and export, printing, and the saved-copy upgrade flow.
-Do not add columns for these.
+undo, recovery of unsaved work, CSV import and export, printing, the saved-copy upgrade flow, and
+combining copies that several people edited (More, Combine with another copy). Do not add columns
+for these.
 
 ## Wording in the tool
 
