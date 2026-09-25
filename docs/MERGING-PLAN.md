@@ -1,6 +1,6 @@
 # Plan: combining copies edited by several people
 
-Status: proposal. Nothing here is implemented yet.
+Status: agreed design (see section 8). Nothing here is implemented yet.
 
 ## 1. The problem
 
@@ -177,7 +177,7 @@ document (apart from their own resolution choices).
   display name), then field. Each shows both values formatted as in the tool, who changed each and
   when, and radio buttons **Keep yours** / **Keep theirs** (and **Keep row** / **Delete row** for row
   conflicts). Bulk buttons: **Keep all yours**, **Keep all theirs**, **Keep the newest** (by actor
-  start time). The dialog cannot finish until every conflict has a choice; the default choice is
+  start time, with the dates it compares shown on the button and on each conflict). The dialog cannot finish until every conflict has a choice; the default choice is
   none, so nothing is decided silently.
 - The whole combine is **one undoable step**. Its undo entry also captures `sync` and the baseline,
   so undo really returns to the state before combining (with the own-counter rule from 3.3).
@@ -350,13 +350,12 @@ Each stage is releasable on its own and keeps every existing file working.
 - `examples/fixtures/`: paired copies for combine tests.
 - Then `node tools/sync-core.mjs` to stamp the new core into every file.
 
-## 8. Open questions
+## 8. Decisions
 
-1. Should combining be allowed in any copy, or only in the hosted home copy? Recommendation: any
-   copy with a current core, because saved copies must keep working offline, but the home copy is
-   where the prompt is most visible.
-2. Should **Keep the newest** use actor start time (what the file knows) or be left out, since
-   device clocks can be wrong? Recommendation: offer it, labelled with the dates it uses.
-3. Is SharePoint's own co-authoring or version history a better answer for some teams? It is not:
-   SharePoint cannot merge HTML files, but its version history is a good source for "the copy you
-   both started from" in 4.5, and the guide should say so.
+1. **Combining is allowed in any copy** with a current core, not only the hosted home copy, so saved
+   copies keep working offline. The home copy is still where the prompt is most visible.
+2. **Keep the newest is offered** as a bulk choice. Device clocks can be wrong, so the button and each
+   conflict show the dates it compares (actor start time for stamped copies, `meta.savedAt` for
+   files from before stamps).
+3. SharePoint co-authoring is not an alternative, because it cannot merge HTML files. Its version
+   history is a good source for "the copy you both started from" in 4.5, and the guide should say so.
