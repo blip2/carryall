@@ -31,11 +31,14 @@ builder and the [guide to building a tool with Copilot](https://blip2.github.io/
 | `tools/sync-core.mjs` | Stamps the core + README into the template and every app file, and generates the Copilot knowledge file. |
 | `tools/build-site.mjs`, `site/`, `.github/workflows/pages.yml` | Publishes the examples, the guide and the reference to GitHub Pages on every push to `main`, rewriting `home` URLs to the Pages address. |
 | `tools/dev-server.mjs` | Local "home" server for testing (`http://localhost:8765/`). |
+| `tools/check.mjs` | Checks a tool definition in the terminal (`--selftest` also runs the self-test in headless Chromium). |
+| `.github/copilot-instructions.md`, `.github/prompts/` | GitHub Copilot instructions and `/new-tool` and `/change-tool` prompts for VS Code. See `docs/BUILD-WITH-GITHUB-COPILOT.md`. |
 | `examples/asset-register.html` | Example tool definition: schema v3, two migrations with tests, dashboards, settings. |
 | `examples/fixtures/asset-register-v1-saved.html` | An *old* saved copy (v1.0, schema 1, from when it was a JavaScript app) for testing upgrades. |
 | `examples/review-tracker.html` | Example tool definition: design review tracker with disciplines, review packages, comments and responses, a review matrix and a printable comment sheet. |
 | `examples/fixtures/review-tracker-sample.html` | A populated review tracker (9 reviews, 43 comments) to explore. |
 | `docs/CREATE-A-TOOL-WITH-COPILOT.md` | Guide for building a tool with Microsoft 365 Copilot, plus agent setup. Published as the site's guide page. |
+| `docs/BUILD-WITH-GITHUB-COPILOT.md` | Guide for power users building tools with GitHub Copilot agent mode in VS Code. Published as a site page. |
 | `docs/copilot/` | Copilot agent instructions (under the 8,000-character limit) and the generated knowledge file. |
 | `docs/STYLE-GUIDE.md` | UI style and accessibility rules (WCAG 2.1 AA) that the core implements and apps must follow. |
 | `deploy/staticwebapp.config.json` | Sample Azure Static Web Apps config. |
