@@ -23,12 +23,12 @@ JavaScript: the core checks every part of a definition and explains each problem
    edit old migrations.
 9. Follow [docs/STYLE-GUIDE.md](docs/STYLE-GUIDE.md) for UI copy: sentence case, plain UK English, no em
    dashes or emoji, never colour alone.
-10. Verify: serve the folder with `node tools/dev-server.mjs <folder>` and open the file with `?selftest`.
-    A definition with problems opens the tool builder instead of the tool, listing every problem. Check
-    every view renders, and try adding, editing and deleting a row.
+10. Verify after every change: `node tools/check.mjs <file>` runs the tool builder's checks in the
+    terminal and lists every problem (exit code 1 if any). Add `--selftest` to render every view and run
+    the tests and migrations in headless Chromium (needs Playwright). Then serve the folder with
+    `node tools/dev-server.mjs <folder>`, open the tool, and try adding, editing and deleting a row.
 
-`Carryall.checkDefinition(text)` in the browser console returns `{ ok, problems, definition }` for any
-definition text, which is handy for checking a draft.
+`Carryall.checkDefinition(text)` in the browser console does the same check for any definition text.
 
 Examples: `examples/review-tracker.html` (links, seeded rows, formulas across links, checks, onSave
 rules, a dashboard, a matrix and a printable sheet) and `examples/asset-register.html` (schema version 3

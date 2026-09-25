@@ -36,7 +36,7 @@ function copy(from, to, { rewrite = true } = {}) {
 
 // ── Pages ────────────────────────────────────────────────────────────────
 const template = read('site/template.html');
-const NAV = [['index.html', 'Home'], ['guide.html', 'Build a tool'], ['reference.html', 'Definition reference'], ['agent.html', 'Copilot agent'], ['carryall.html', 'Tool builder']];
+const NAV = [['index.html', 'Home'], ['guide.html', 'Build a tool'], ['reference.html', 'Definition reference'], ['agent.html', 'Copilot agent'], ['github-copilot.html', 'GitHub Copilot'], ['carryall.html', 'Tool builder']];
 function page(file, { title, description, main }) {
   const nav = NAV.map(([href, label]) => `<li><a href="${href}"${href === file ? ' aria-current="page"' : ''}>${label}</a></li>`).join('');
   const html = template.replace('{{title}}', () => esc(title)).replace('{{description}}', () => esc(description))
@@ -53,6 +53,9 @@ const LINKS = {
   'copilot/agent-instructions.md': { href: 'agent.html#instructions' },
   'copilot/carryall-reference.md': { href: 'copilot/carryall-reference.md', download: true },
   'docs/CREATE-A-TOOL-WITH-COPILOT.md': { href: 'guide.html' },
+  'CREATE-A-TOOL-WITH-COPILOT.md': { href: 'guide.html' },
+  'BUILD-WITH-GITHUB-COPILOT.md': { href: 'github-copilot.html' },
+  'docs/BUILD-WITH-GITHUB-COPILOT.md': { href: 'github-copilot.html' },
 };
 const link = from => href => {
   if (LINKS[href]) return LINKS[href];
@@ -79,6 +82,7 @@ page('index.html', {
   main: read('site/home.html'),
 });
 mdPage('guide.html', 'docs/CREATE-A-TOOL-WITH-COPILOT.md', 'How to build a Carryall tool with Microsoft 365 Copilot and the tool builder, and how to set up the Copilot agent.');
+mdPage('github-copilot.html', 'docs/BUILD-WITH-GITHUB-COPILOT.md', 'For VS Code users: build and change Carryall tools with GitHub Copilot agent mode, which runs the checker and fixes problems itself.');
 mdPage('reference.html', 'src/definition-reference.md', 'Everything a Carryall tool definition can contain: tables, columns, formulas, views, checks, starting rows, tests and migrations.');
 
 const instructions = read('docs/copilot/agent-instructions.md').trimEnd();

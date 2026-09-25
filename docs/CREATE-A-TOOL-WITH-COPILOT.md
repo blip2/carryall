@@ -5,6 +5,9 @@ calculations. You don't write any code. Copilot writes a **tool definition** (a 
 describes your tables, columns, calculations and views), and the Carryall **tool builder** checks it,
 lets you try it and turns it into your finished tool.
 
+Comfortable with VS Code? [Building with GitHub Copilot](BUILD-WITH-GITHUB-COPILOT.md) is faster:
+its agent runs the checks and fixes problems itself.
+
 The builder does the checking that Copilot can't. If anything in the definition is wrong, it tells
 you exactly what and where, and gives you the problems as text to paste back into Copilot. A few
 rounds of that are normal.
