@@ -177,7 +177,8 @@ document (apart from their own resolution choices).
   display name), then field. Each shows both values formatted as in the tool, who changed each and
   when, and radio buttons **Keep yours** / **Keep theirs** (and **Keep row** / **Delete row** for row
   conflicts). Bulk buttons: **Keep all yours**, **Keep all theirs**, **Keep the newest** (by actor
-  start time, with the dates it compares shown on the button and on each conflict). The dialog cannot finish until every conflict has a choice; the default choice is
+  start time, with the dates it compares shown on the button and on each conflict). The
+  dialog cannot finish until every conflict has a choice; the default choice is
   none, so nothing is decided silently.
 - The whole combine is **one undoable step**. Its undo entry also captures `sync` and the baseline,
   so undo really returns to the state before combining (with the own-counter rule from 3.3).
