@@ -7,17 +7,21 @@
  This one HTML file is a complete app: structured data + viewer + editor.
  Open it in Edge or Chrome and it works. There is no server and no database.
  Users edit the data and save a new copy of this file (to SharePoint, a file
- share, anywhere). The copy contains the data AND the code that made it, so
- it keeps working on its own for as long as browsers can open HTML.
+ share, anywhere). The copy contains the data AND the definition of the tool
+ that made it, so it keeps working on its own for as long as browsers can
+ open HTML.
 
- The preferred workflow is to use the tool's hosted "home" copy (app.home,
- e.g. an Azure Static Web App). A saved file opened locally shows a banner
+ The preferred workflow is to use the tool's hosted "home" copy (home, e.g.
+ an Azure Static Web App). A saved file opened locally shows a banner
  offering to send its data to the home copy, which upgrades (migrates) the
  data to the latest schema. Saved copies stay usable offline regardless.
 
  WHERE THINGS ARE IN THIS FILE (all ids start with "ca-")
    <script id="ca-data" type="application/json">   THE DATA. Plain JSON, one
         row per line. "null" in a blank tool. Readable in any text editor.
+   <script id="ca-spec" type="application/json">   THE TOOL DEFINITION: the
+        tables, columns, formulas and views, as JSON. "null" in the blank
+        template, which then opens the tool builder. See the reference below.
    <style id="ca-core-css">    framework styles       (do not edit, see below)
    <style id="ca-app-css">     app styles             (edit freely)
    <div id="ca-root">          UI renders here; emptied when saving
@@ -26,8 +30,8 @@
    <script id="ca-vendor-*">   optional inlined libraries (one per block)
    <script id="ca-core">       the Carryall runtime   (do not edit, see below)
    <script id="ca-plugin-*">   optional plugins
-   <script id="ca-app">        THE APP DEFINITION: schema, calcs, views,
-        migrations. This is the only script an app author edits.
+   <script id="ca-app">        optional JavaScript: a tool written in code
+        instead of JSON (see JAVASCRIPT APPS), or plugin registrations.
 
  RULE: every <script>, <style> or <noscript> you add MUST have an id starting
  "ca-". Saving rebuilds the file from these blocks and drops anything else.
@@ -37,15 +41,41 @@
  ════════════════════════════════════════════════════════════════
  HOW TO BUILD A NEW TOOL (instructions for people and LLMs)
  ════════════════════════════════════════════════════════════════
- 1. Copy the blank template (carryall.html). Name it after the tool.
- 2. Edit ONLY <script id="ca-app"> (and optionally <style id="ca-app-css">).
- 3. Call Carryall.app({...}) once, with:
+ 1. Open the blank template (carryall.html) in Edge or Chrome. It shows the
+    tool builder.
+ 2. Write a tool definition: JSON, as described in the reference below.
+    The Carryall Tool Builder agent in Microsoft 365 Copilot writes one
+    from a plain description (see docs/CREATE-A-TOOL-WITH-COPILOT.md).
+ 3. Paste it into the builder and select Check definition. Every problem
+    is listed with a fix; Copy problems for Copilot copies them for the
+    agent. Repeat until it says Ready to use (this includes the self-test).
+ 4. Preview the tool, then Download it: a finished tool file with no data.
+ 5. To change a tool, open it and choose More, Change this tool.
+ 6. Release: increase version, and host the downloaded file as the home copy.
+    The home copy is simply the tool file with <script id="ca-data"> null.
+
+ An LLM editing a file directly (for example in VS Code) edits only
+ <script id="ca-spec"> (and optionally <style id="ca-app-css">), then opens
+ the file with ?selftest on the URL to run the self-test.
+
+ ════════════════════════════════════════════════════════════════
+ TOOL DEFINITION REFERENCE
+ ════════════════════════════════════════════════════════════════
+{{DEFINITION_REFERENCE}}
+
+ ════════════════════════════════════════════════════════════════
+ JAVASCRIPT APPS (advanced, for developers)
+ ════════════════════════════════════════════════════════════════
+ A developer can define a tool in JavaScript instead, which allows custom
+ views written in code. Tools built from JSON are easier to check and to
+ change; prefer them. A JavaScript app leaves <script id="ca-spec"> null.
+ J1. Call Carryall.app({...}) once in <script id="ca-app">, with:
       id             stable kebab-case id. NEVER change it after release:
                      files are matched to tools by this id.
       name           display name
       version        semver of the app code, bump on every release
       schemaVersion  integer, starts at 1. Bump by 1 whenever the SHAPE of
-                     stored data changes, and add a migration (step 6).
+                     stored data changes, and add a migration (J4).
       description    one line shown on the start screen
       home           URL of the hosted copy (optional but recommended)
       versionUrl     URL of a JSON file {"version": "1.2.0"} used to tell
@@ -64,20 +94,21 @@
                      { required: ['projectNumber', 'projectName'],
                        firstRevision: 'P01' }  (these are the defaults)
                      or false to switch them off for a trivial tool.
-      tables         see step 4
+      tables         see J2
       settings       optional single record of document-wide values: same
                      shape as a table ({ columns: {...} }). Stored in
                      data.settings. Edited with a "settings" view.
-      views          see step 5 (defaults to one table view per table)
-      migrations     see step 6
-      fixtures       see step 7
+      views          see J3 (defaults to one table view per table)
+      migrations     see J4
+      fixtures       see J5
       onNew(doc, api)  optional: seed a brand new document
- 4. Define tables. Each row automatically gets a stable string "id".
+ J2. Define tables. Each row automatically gets a stable string "id".
       tables: {
         assets: {
           label: 'Assets', singular: 'asset',
           display: 'name',        // column (or fn(row)) used when referenced
-          validate: (row, api) => ({ field: 'message' }),  // optional
+          validate: (row, api) => ({ field: 'message' }),  // optional; a
+                  // plain string is shown as a message for the whole form
           onSave: (row, before, api) => { row.closed = ... },  // optional:
                   // adjust a row from the form before it is stored
                   // (before is null for a new row)
@@ -110,7 +141,7 @@
       api.util.daysBetween(a, b), yearsBetween, addDays, addMonths, parseDate.
     Store money as plain numbers in major units (1234.5). Store dates as
       "YYYY-MM-DD" strings. Store nothing derivable.
- 5. Define views (tabs). Types:
+ J3. Define views (tabs). Types:
       { type: 'table', table, title?, columns?: [keys], sort?: {key, dir},
         totals?: [keys], filters?: [keys] (computed columns allowed),
         where?: (row, api) => bool,
@@ -123,6 +154,10 @@
       { type: 'dashboard', title, blocks: [ ...kpi/summary/table/custom ] }
           kpi blocks and blocks with wide: true span the full width
       { type: 'settings', title, fields?: [keys], intro? }
+      { type: 'sheet', title, table, fields?, sort?, where?,
+        child?: { table, link (ref column), columns?, sort?, where? } }
+      { type: 'matrix', title, table, rows: column key or fn(row, api),
+        columns: same, metrics?: [{ label, op, column, where? }], where? }
       { type: 'custom', title, render: (el, api) => { el.append(...) } }
     Custom views build DOM with api.h(tag, props, ...children), which is
       XSS-safe (children become text). NEVER use innerHTML with data.
@@ -134,7 +169,7 @@
       api.ui.dialog / alert / confirm, api.toast(msg).
     NEVER mutate api.doc directly: use insert/update/remove/setSettings so
       undo, recovery and the unsaved-changes marker work.
- 6. Migrations. When stored data changes shape, bump schemaVersion from N to
+ J4. Migrations. When stored data changes shape, bump schemaVersion from N to
     N+1 and add migrations[N+1] = (doc, ctx) => { ...mutate doc... }.
       doc is the whole file envelope {app, meta, settings, tables}. Mutate
       it in place (or return a new one). ctx.uid() makes new row ids.
@@ -145,14 +180,11 @@
       data does. Unknown fields are preserved, so removing a column from
       the schema leaves old values in the file (harmless).
     Files saved by a NEWER schema open read-only with a warning.
- 7. Test. Open the file with ?selftest on the URL (or About, Run self-test).
+ J5. Test. Open the file with ?selftest on the URL (or About, Run self-test).
     It checks the definition, renders every view, migrates each fixture:
       fixtures: [{ name: 'v1 sample', doc: {app: {id, schemaVersion: 1},
                    tables: {...}}, expect: (doc, api) => boolean }]
     and round-trips an export. Keep one small fixture per old schema version.
- 8. Release: bump version, deploy the file as the home copy. The home copy
-    is simply this file with <script id="ca-data"> containing null.
-
  STYLE (full rules in docs/STYLE-GUIDE.md of the Carryall repository)
    The core styles already meet WCAG 2.1 AA: Arial, 16px base, rem units,
    44px targets, visible focus, light and dark modes. When writing an app:
