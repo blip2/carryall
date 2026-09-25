@@ -8,7 +8,7 @@ JavaScript: the core checks every part of a definition and explains each problem
    at the top of every Carryall file). It is the complete reference for tool definitions: columns,
    formulas, views, checks, onSave rules, seed rows, tests and migrations.
 3. Replace `null` in `<script type="application/json" id="ca-spec">` with the definition. Write `<` as
-   `<` inside it (so the JSON can never close the script tag). Edit only `#ca-spec` and, if needed,
+   `\u003c` inside it (so the JSON can never close the script tag). Edit only `#ca-spec` and, if needed,
    `<style id="ca-app-css">`. Never hand-edit `#ca-core`, `#ca-core-css` or the README comment;
    `node tools/sync-core.mjs` owns them.
 4. Any `<script>`, `<style>` or `<noscript>` you add must have an id starting `ca-`, or it is dropped from
