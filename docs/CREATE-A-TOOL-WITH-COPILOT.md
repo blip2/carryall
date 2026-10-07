@@ -5,8 +5,10 @@ calculations. You don't write any code. Copilot writes a **tool definition** (a 
 describes your tables, columns, calculations and views), and the Carryall **tool builder** checks it,
 lets you try it and turns it into your finished tool.
 
-Comfortable with VS Code? [Building with GitHub Copilot](BUILD-WITH-GITHUB-COPILOT.md) is faster:
-its agent runs the checks and fixes problems itself.
+Microsoft 365 Copilot only ever writes tool definitions, never code. Definitions suit most trackers,
+registers and calculators. A tool that needs more (custom screens such as a timeline or a board, or
+calculations a formula can't express) is built with [GitHub Copilot in VS Code](BUILD-WITH-GITHUB-COPILOT.md),
+which can write it as a JavaScript app. That route is also faster for anyone comfortable with VS Code.
 
 The builder does the checking that Copilot can't. If anything in the definition is wrong, it tells
 you exactly what and where, and gives you the problems as text to paste back into Copilot. A few
@@ -100,7 +102,8 @@ saved data without one. Never let the tool's `id` change.
   the builder's problems, and ask again.
 - **What tools can do**: linked lists, calculations across links (including trees, such as loads
   adding up through distribution boards), totals, flags, dashboards, printable sheets and cross-tabs.
-  **What they can't**: attachments, photos, maps, email, or more than a few thousand rows.
+  **What they can't**: attachments, photos, maps, email, or more than a few thousand rows. Screens other
+  than these, and calculations a formula can't express, need a JavaScript app built with GitHub Copilot.
 - The full list of what a definition can contain is in the
   [tool definition reference](../src/definition-reference.md).
 
@@ -121,7 +124,7 @@ In Microsoft 365 Copilot, create an agent with Agent Builder (or Copilot Studio)
 |:-|:-|
 | Name | Carryall Tool Builder |
 | Description | Builds Carryall tracker and calculator tools from a plain-English description. |
-| Instructions | The whole of the [agent instructions](copilot/agent-instructions.md) (about 6,700 characters, under the 8,000 limit) |
+| Instructions | The whole of the [agent instructions](copilot/agent-instructions.md) (about 7,500 characters, under the 8,000 limit) |
 | Knowledge | [carryall-reference.md](copilot/carryall-reference.md): upload it, or store it in a SharePoint folder and add that |
 | Starter prompts | "Build a new tool to track…" · "Change my tool: here is its definition…" · "The tool builder found these problems…" |
 
@@ -137,5 +140,6 @@ the new copy, and its instructions if they changed.
 
 Copilot in Microsoft 365 writes its answer once and can't run it, so it can't find its own mistakes.
 A definition is a small, strict format, so the builder can check every part of it and explain each
-problem in words Copilot can act on. Code has too many ways to be almost right. Developers can still
-write tools in JavaScript (see `AGENTS.md`), but definitions are the recommended route for everyone.
+problem in words Copilot can act on. Code has too many ways to be almost right. So the agent here
+always writes definitions. GitHub Copilot in VS Code can run and test code, so for complex tools it
+writes JavaScript apps instead (see `AGENTS.md`).

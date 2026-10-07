@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const CORE_VERSION = '0.3.0';
+  const CORE_VERSION = '0.4.0';
   const FORMAT = 'carryall/1';
   const PAGE = 500;                 // rows rendered before "show more"
   const SOFT_ROWS = 5000;           // size advisory thresholds
@@ -23,6 +23,7 @@
     fileName: null,
     handle: null,         // FileSystemFileHandle for save-in-place (html only)
     tab: 0,
+    cameFrom: null,       // the tab shown before this one (a sheet's Back button returns to it)
     viewState: {},
     undo: [], redo: [],
     shell: null,          // pristine <html> clone used to build exports
@@ -162,6 +163,8 @@
       home: null, versionUrl: null, identity: null, migrations: {}, fixtures: [], views: [],
       ...def,
     };
+    app.home = hostedUrl(app.home);
+    app.versionUrl = hostedUrl(app.versionUrl);
     app.tables = {};
     for (const [tk, t] of Object.entries(keyed(def.tables, 'Table', fail))) app.tables[tk] = normTable(tk, t, fail);
     if (def.onNew != null && typeof def.onNew !== 'function') fail('"onNew" must be a function (doc, api) => { ... }');
@@ -176,6 +179,16 @@
     if (!app.views.length) app.views = Object.keys(app.tables).map(t => ({ type: 'table', table: t }));
     app.views = app.views.map((v, i) => ({ title: v.title || (v.table && app.tables[v.table]?.label) || `View ${i + 1}`, ...v }));
     return app;
+  }
+  // "home" and "versionUrl" only count when they point somewhere others can reach. An address on
+  // this computer (localhost, used by tools/dev-server.mjs while testing) is ignored unless the
+  // tool is being served from that same address, so copies shared with others never offer it.
+  function hostedUrl(u) {
+    if (typeof u !== 'string' || !u.trim()) return null;
+    let url;
+    try { url = new URL(u, location.href); } catch { return null; }
+    const local = /^(localhost|127(\.\d+){3}|0\.0\.0\.0|\[::1\])$/i.test(url.hostname) || /\.localhost$/i.test(url.hostname);
+    return local && url.hostname !== location.hostname ? null : u;
   }
   function normTable(key, t, fail) {
     const columns = {};
@@ -1973,7 +1986,21 @@
   const emptyText = 'Not set';
 
   // ── Record form ────────────────────────────────────────────────────────
-  function fieldInput(col, value, onChange) {
+  // Suggestions for a text column: the distinct values already in it (and in any "suggestFrom"
+  // columns, written "table.column"), trimmed and sorted with case ignored.
+  function suggestList(values) {
+    const seen = new Set();
+    for (const v of values) { if (fxBlank(v)) continue; const x = String(v).trim(); if (x) seen.add(x); }
+    return [...seen].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }) || (a < b ? -1 : a > b ? 1 : 0));
+  }
+  function suggestValues(t, col) {
+    const sources = [];
+    if (S.app.tables[t]) sources.push([t, col.key]);
+    for (const src of col.suggestFrom || []) { const [tk, ck] = String(src).split('.'); if (S.app.tables[tk]?.columns[ck]) sources.push([tk, ck]); }
+    return suggestList(sources.flatMap(([tk, ck]) => tableRows(tk).map(r => rawValue(tk, r, ck))));
+  }
+  let listSeq = 0;
+  function fieldInput(col, value, onChange, t = null) {
     const set = v => onChange(v);
     switch (col.type) {
       case 'longtext':
@@ -1994,8 +2021,15 @@
         return h('select', { class: 'ca-select', onchange: e => set(e.target.value || null) },
           h('option', { value: '' }, emptyText), opts.map(([id, label]) => h('option', { value: id, selected: id === value }, label)));
       }
-      default:
-        return h('input', { class: 'ca-input', type: 'text', value: value ?? '', maxlength: col.maxLength, oninput: e => set(e.target.value || null) });
+      default: {
+        const input = h('input', { class: 'ca-input', type: 'text', value: value ?? '', maxlength: col.maxLength, oninput: e => set(e.target.value || null) });
+        if (col.type !== 'text' || !t || col.suggest === false || !(col.suggest || col.suggestFrom)) return input;
+        // Any value can still be typed: the list only offers what is already in use.
+        const listId = 'ca-list' + (++listSeq);
+        input.setAttribute('list', listId);
+        input.setAttribute('autocomplete', 'off');
+        return h('div', { class: 'ca-suggest' }, input, h('datalist', { id: listId }, suggestValues(t, col).map(v => h('option', { value: v }))));
+      }
     }
   }
   function validateRow(t, row) {
@@ -2017,10 +2051,23 @@
     }
     return errs;
   }
-  function openForm(t, id, preset = {}) {
+  // Save a row through the normal path: the table's checks, then its onSave rules, then one
+  // undoable change. Returns the errors (an empty object when it saved).
+  function saveRow(t, existing, draft) {
+    const td = S.app.tables[t];
+    const errs = validateRow(t, draft);
+    if (Object.keys(errs).length) return errs;
+    if (typeof td.onSave === 'function') td.onSave(draft, existing ? clone(existing) : null, makeApi());
+    const { id: _id, ...rest } = draft;
+    if (existing) updateRow(t, existing.id, rest); else insertRow(t, rest);
+    return {};
+  }
+  // preset: values for a new row, or changes already made to an existing one (shown checked when
+  // showErrors is set, as when a quick edit from a table breaks one of the table's checks).
+  function openForm(t, id, preset = {}, { showErrors: checkNow = false } = {}) {
     const td = S.app.tables[t];
     const existing = id ? tableRows(t).find(r => r.id === id) : null;
-    const draft = existing ? clone(existing) : { id: null, ...defaultsFor(td), ...preset };
+    const draft = existing ? { ...clone(existing), ...preset, id: existing.id } : { id: null, ...defaultsFor(td), ...preset };
     const ro = S.readOnly || td.readOnly;
     const fields = {};
     const computedEls = [];
@@ -2031,7 +2078,7 @@
         computedEls.push([el, c]);
         return makeField(c.label + ' (calculated)', el).wrap;
       }
-      const input = ro ? h('div', { class: 'ca-readonly' }, formatCell(t, draft, c.key) || emptyText) : fieldInput(c, draft[c.key], v => { draft[c.key] = v; refreshComputed(); });
+      const input = ro ? h('div', { class: 'ca-readonly' }, formatCell(t, draft, c.key) || emptyText) : fieldInput(c, draft[c.key], v => { draft[c.key] = v; refreshComputed(); }, t);
       const f = makeField(c.label, input, { required: c.required && !ro, help: c.help });
       fields[c.key] = f;
       return f.wrap;
@@ -2049,15 +2096,17 @@
       return true;
     } });
     buttons.push({ label: ro ? 'Close' : 'Cancel', value: false });
-    if (!ro) buttons.push({ label: existing ? 'Save changes' : `Add ${td.singular}`, primary: true, onClick: () => {
+    const check = () => {
       const errs = validateRow(t, draft);
       formErr.textContent = errs._form || '';
-      if (!showErrors(fields, errs) || errs._form) return false;
-      if (typeof td.onSave === 'function') td.onSave(draft, existing ? clone(existing) : null, makeApi());
-      const { id: _id, ...rest } = draft;
-      if (existing) updateRow(t, id, rest); else insertRow(t, rest);
+      return showErrors(fields, errs) && !errs._form;
+    };
+    if (!ro) buttons.push({ label: existing ? 'Save changes' : `Add ${td.singular}`, primary: true, onClick: () => {
+      if (!check()) return false;
+      saveRow(t, existing, draft);
       return true;
     } });
+    if (checkNow && !ro) setTimeout(check);
     return dialog({ title: `${existing ? (ro ? 'View' : 'Edit') : 'New'} ${td.singular}`, body, buttons });
   }
   function defaultsFor(td) {
@@ -2227,15 +2276,45 @@
     if (col.type === 'longtext' && text.length > 80) return text.slice(0, 79) + '…';
     return text;
   }
+  // Small line icons, drawn with the text colour. Always beside text or inside a named control.
+  const ICONS = {
+    edit: 'M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4',
+    undo: 'M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+    redo: 'M15 14l5-5-5-5 M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
+    close: 'M6 6l12 12 M18 6 6 18',
+  };
+  function icon(name) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false', class: 'ca-icon' })) svg.setAttribute(k, v);
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', ICONS[name]);
+    svg.append(path);
+    return svg;
+  }
+  const sessionGet = k => { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch { return null; } };
+  const sessionSet = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked: kept for this page only */ } };
+
   function renderTableView(el, view, api, key) {
     const t = view.table, td = S.app.tables[t];
     if (!td) throw new Error(`Table "${t}" is not defined`);
     const vs = S.viewState[key] = S.viewState[key] || { q: '', sort: view.sort ? { ...view.sort } : null, filters: {}, limit: PAGE };
-    const cols = (view.columns || Object.keys(td.columns).filter(k => !td.columns[k].hidden)).map(k => {
-      if (!td.columns[k]) throw new Error(`Column "${k}" is not defined on ${t}`);
-      return td.columns[k];
-    });
-    const count = h('span', { class: 'ca-muted' });
+    const colOf = k => { if (!td.columns[k]) throw new Error(`Column "${k}" is not defined on ${t}`); return td.columns[k]; };
+    // "hiddenColumns" start hidden; the Columns menu shows them. The choice lasts for the session.
+    const listed = view.columns || Object.keys(td.columns).filter(k => !td.columns[k].hidden);
+    const hideable = (view.hiddenColumns || []).filter(k => td.columns[k]);
+    const every = [...listed, ...hideable.filter(k => !listed.includes(k))];
+    const store = hideable.length && !String(key).startsWith('selftest') ? `ca-columns/${S.app.id}/${key}` : null;
+    if (!vs.shown) { const saved = store && sessionGet(store); vs.shown = Array.isArray(saved) ? saved : every.filter(k => !hideable.includes(k)); }
+    let shown = every.filter(k => vs.shown.includes(k));
+    if (!shown.length) shown = [every[0]];
+    const cols = shown.map(colOf);
+    const ro = S.readOnly || td.readOnly || view.readOnly;
+    const formRo = S.readOnly || td.readOnly;
+    // "open": selecting a row shows it on that sheet tab; the first column edits it directly.
+    const sheetTab = view.open ? S.app.views.findIndex(v => v.type === 'sheet' && v.title === view.open && v.table === t) : -1;
+    const quick = ro ? [] : (view.quickEdit || []).filter(k => td.columns[k]?.type === 'choice' && td.columns[k].options?.length);
+    const count = h('span', { class: 'ca-muted ca-count' });
     const tbody = h('tbody'), tfoot = h('tfoot');
     const filters = (view.filters || []).map(fk => {
       const c = td.columns[fk];
@@ -2246,12 +2325,33 @@
       return h('select', { class: 'ca-select', 'aria-label': `Filter by ${c.label}`, onchange: e => { vs.filters[fk] = e.target.value; vs.limit = PAGE; refresh(); } },
         h('option', { value: '' }, `Any ${c.label.toLowerCase()}`), opts.map(([v, l]) => h('option', { value: v, selected: vs.filters[fk] === v }, l)));
     });
-    const ro = S.readOnly || td.readOnly || view.readOnly;
-    el.append(h('div', { class: 'ca-tv-bar' },
+    const nHidden = every.length - shown.length;
+    const columnsMenu = hideable.length > 0 && h('details', { class: 'ca-menu ca-columns', open: !!vs.colsOpen,
+      ontoggle: e => { vs.colsOpen = e.currentTarget.open; },
+      onkeydown: e => { if (e.key === 'Escape' && e.currentTarget.open) { e.currentTarget.open = false; e.currentTarget.querySelector('summary').focus(); } } },
+      h('summary', { class: 'ca-btn', dataset: { caFocus: `columns.${key}` } }, 'Columns', nHidden > 0 && h('span', { class: 'ca-muted' }, `(${nHidden} hidden)`), h('span', { 'aria-hidden': 'true' }, '▾')),
+      h('div', { class: 'ca-menu-list', role: 'group', 'aria-label': 'Columns to show' }, every.map(k => {
+        const on = shown.includes(k);
+        return h('label', { class: 'ca-check' }, h('input', { type: 'checkbox', checked: on, disabled: on && shown.length === 1, dataset: { caFocus: `column.${key}.${k}` },
+          onchange: e => {
+            vs.shown = e.target.checked ? every.filter(x => x === k || shown.includes(x)) : shown.filter(x => x !== k);
+            if (store) sessionSet(store, vs.shown);
+            render();
+          } }), colOf(k).label);
+      })));
+    // On narrow screens the filters fold away behind a Filters button (see .ca-filter-set).
+    const nActive = () => Object.values(vs.filters).filter(Boolean).length;
+    const activeText = h('span', { class: 'ca-muted' });
+    const filterId = `ca-filters-${String(key).replace(/\W/g, '-')}`;
+    el.append(h('div', { class: 'ca-tv-bar ca-table-bar' },
       view.search !== false && h('input', { class: 'ca-input', type: 'search', placeholder: 'Search…', value: vs.q, 'aria-label': 'Search', oninput: e => { vs.q = e.target.value; vs.limit = PAGE; refresh(); } }),
-      filters, h('span', { class: 'ca-spacer' }), count,
+      filters.length > 0 && h('button', { class: 'ca-btn ca-filter-toggle', type: 'button', 'aria-expanded': String(!!vs.filtersOpen), 'aria-controls': filterId,
+        dataset: { caFocus: `filters.${key}` }, onclick: () => { vs.filtersOpen = !vs.filtersOpen; render(); } },
+        'Filters', activeText, h('span', { 'aria-hidden': 'true' }, '▾')),
+      filters.length > 0 && h('div', { class: `ca-filter-set${vs.filtersOpen ? ' open' : ''}`, id: filterId }, filters),
+      h('span', { class: 'ca-spacer' }), count, columnsMenu,
       !ro && view.add !== false && h('button', { class: 'ca-btn primary', onclick: () => openForm(t, null, view.preset) }, `+ Add ${td.singular}`)));
-    const thead = h('thead', h('tr', cols.map(c => {
+    const thead = h('thead', h('tr', sheetTab >= 0 && h('th', { scope: 'col', class: 'ca-edit-col' }, h('span', { class: 'ca-visually-hidden' }, formRo ? 'View' : 'Edit')), cols.map(c => {
       const active = vs.sort && vs.sort.key === c.key;
       return h('th', { class: `sortable${isNumericCol(c) ? ' num' : ''}`, scope: 'col', 'aria-sort': active ? (vs.sort.dir === 'desc' ? 'descending' : 'ascending') : null },
         h('button', { class: 'ca-sort-btn', type: 'button', dataset: { caFocus: `sort.${key}.${c.key}` },
@@ -2262,6 +2362,22 @@
     const more = h('div', { style: { textAlign: 'center', marginTop: '10px' } });
     el.append(more);
 
+    const editCell = r => {
+      const label = `${formRo ? 'View' : 'Edit'} ${td.singular} ${displayOf(t, r)}`.trim();
+      const open = e => { e.stopPropagation(); openForm(t, r.id); };
+      return h('td', { class: 'ca-edit-cell', onclick: open },
+        h('button', { class: 'ca-icon-btn', type: 'button', 'aria-label': label, title: label, dataset: { caFocus: `edit.${key}.${r.id}` }, onclick: open }, icon('edit')));
+    };
+    const rowNode = r => {
+      const act = sheetTab >= 0 ? () => openSheet(sheetTab, r.id) : () => openForm(t, r.id);
+      return h('tr', { class: 'clickable', tabindex: 0, dataset: { caRow: r.id }, onclick: act,
+        // Enter on a button inside the row belongs to that button, not the row.
+        onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) act(); } },
+        sheetTab >= 0 && editCell(r),
+        cols.map(c => quick.includes(c.key)
+          ? h('td', { class: 'ca-quick-cell', onclick: e => e.stopPropagation() }, quickEditButton(t, r, c, key))
+          : h('td', { class: `${isNumericCol(c) ? 'num' : ''}${c.type === 'computed' ? ' ca-computed' : ''}${c.type === 'longtext' ? ' ca-long' : ''}` }, cellNode(t, r, c))));
+    };
     const refresh = () => withCalc(refreshRows);
     function refreshRows() {
       const all = tableRows(t);
@@ -2271,20 +2387,100 @@
         rows = rows.filter(r => cols.some(c => formatCell(t, r, c.key).toLowerCase().includes(q)));
       }
       if (vs.sort) rows = sortRows(t, rows, vs.sort);
-      tbody.replaceChildren(...(rows.length ? rows.slice(0, vs.limit).map(r => h('tr', { class: 'clickable', tabindex: 0, onclick: () => openForm(t, r.id), onkeydown: e => { if (e.key === 'Enter') openForm(t, r.id); } },
-        cols.map(c => h('td', { class: `${isNumericCol(c) ? 'num' : ''}${c.type === 'computed' ? ' ca-computed' : ''}${c.type === 'longtext' ? ' ca-long' : ''}` }, cellNode(t, r, c)))))
-        : [h('tr', h('td', { class: 'ca-empty', colspan: cols.length }, all.length ? 'No matching rows' : `No ${td.label.toLowerCase()} yet`))]));
+      const span = cols.length + (sheetTab >= 0 ? 1 : 0);
+      tbody.replaceChildren(...(rows.length ? rows.slice(0, vs.limit).map(rowNode)
+        : [h('tr', h('td', { class: 'ca-empty', colspan: span }, all.length ? 'No matching rows' : `No ${td.label.toLowerCase()} yet`))]));
       if (view.totals?.length && rows.length) {
-        tfoot.replaceChildren(h('tr', cols.map((c, i) => {
+        tfoot.replaceChildren(h('tr', sheetTab >= 0 && h('td', ''), cols.map((c, i) => {
           if (!view.totals.includes(c.key)) return h('td', i === 0 ? 'Total' : '');
           const sum = rows.reduce((s, r) => s + (Number(rawValue(t, r, c.key)) || 0), 0);
           return h('td', { class: 'num' }, formatAs(c.type === 'computed' ? c.format || 'number' : c.type, sum, c));
         })));
       } else tfoot.replaceChildren();
+      activeText.textContent = nActive() ? `(${nActive()} on)` : '';
       count.textContent = rows.length === all.length ? `${all.length} ${all.length === 1 ? td.singular : td.label.toLowerCase()}` : `${rows.length} of ${all.length}`;
       more.replaceChildren(rows.length > vs.limit ? h('button', { class: 'ca-btn', onclick: () => { vs.limit += PAGE; refresh(); } }, `Show more (${rows.length - vs.limit} remaining)`) : '');
     }
     refresh();
+  }
+
+  // ── Quick edit: change a choice from a table without opening the row ──
+  // The change is saved like the form saves it (checks, onSave rules, undo). If a check fails,
+  // the form opens with the change made and the problem shown.
+  function quickEditButton(t, row, col, key) {
+    const td = S.app.tables[t];
+    const v = row[col.key];
+    const focusKey = `quick.${key}.${row.id}.${col.key}`;
+    const btn = h('button', { class: 'ca-quick', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', dataset: { caFocus: focusKey },
+      'aria-label': `${col.label}: ${v ?? emptyText}. Change the ${col.label.toLowerCase()} of ${td.singular} ${displayOf(t, row)}`.trim(),
+      onclick: e => { e.stopPropagation(); quickMenu(btn, t, row.id, col, focusKey); } },
+      v ? UI.pill(v, col.colors?.[v]) : h('span', { class: 'ca-muted' }, emptyText),
+      h('span', { class: 'ca-quick-caret', 'aria-hidden': 'true' }, '▾'));
+    return btn;
+  }
+  let quickOpen = null;
+  function closeQuickMenu(refocus = false) {
+    const q = quickOpen;
+    if (!q) return;
+    quickOpen = null;
+    q.cleanup();
+    q.menu.remove();
+    q.btn.setAttribute('aria-expanded', 'false');
+    if (refocus && q.btn.isConnected) q.btn.focus();
+  }
+  function quickMenu(btn, t, id, col, focusKey) {
+    if (quickOpen?.btn === btn) { closeQuickMenu(true); return; }
+    closeQuickMenu();
+    const row = rowById(t, id);
+    if (!row) return;
+    const td = S.app.tables[t];
+    const current = row[col.key] ?? null;
+    const options = [...col.options, ...(col.required ? [] : [null])];
+    const choose = o => {
+      closeQuickMenu();
+      const cur = rowById(t, id);
+      if (!cur) return;
+      if ((cur[col.key] ?? null) === o) { if (btn.isConnected) btn.focus(); return; }
+      const errs = saveRow(t, cur, { ...clone(cur), [col.key]: o });
+      if (Object.keys(errs).length) { openForm(t, id, { [col.key]: o }, { showErrors: true }); return; }
+      toast(`${col.label} changed to ${o ?? emptyText.toLowerCase()}. Undo with Ctrl+Z.`);
+      (document.querySelector(`[data-ca-focus="${CSS.escape(focusKey)}"]`) || document.getElementById('ca-main'))?.focus();
+    };
+    const items = options.map(o => h('button', { type: 'button', role: 'menuitemradio', tabindex: '-1', 'aria-checked': String(o === current), onclick: () => choose(o) },
+      o == null ? h('span', emptyText) : UI.pill(o, col.colors?.[o])));
+    const move = (i, d) => items[(i + d + items.length) % items.length].focus();
+    const menu = h('div', { class: 'ca-quick-menu', role: 'menu', 'aria-label': `${col.label} of ${td.singular} ${displayOf(t, row)}`.trim(),
+      onkeydown: e => {
+        const i = items.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown') { e.preventDefault(); move(i, 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); move(i < 0 ? 0 : i, -1); }
+        else if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+        else if (e.key === 'End') { e.preventDefault(); items[items.length - 1].focus(); }
+        else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); closeQuickMenu(true); }
+      } }, items);
+    document.body.append(menu);
+    // Below the button (above it when there is no room), following it when the page scrolls.
+    const place = () => {
+      const r = btn.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > innerHeight) { closeQuickMenu(); return; }
+      const mh = menu.offsetHeight, mw = menu.offsetWidth;
+      menu.style.left = Math.max(8, Math.min(r.left, innerWidth - mw - 8)) + 'px';
+      menu.style.top = (r.bottom + 4 + mh <= innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top - 4 - mh)) + 'px';
+    };
+    place();
+    // A press on the menu's own button is left to its click, which closes the menu.
+    const outside = e => { if (!menu.contains(e.target) && !btn.contains(e.target)) closeQuickMenu(); };
+    const moved = e => { if (!menu.contains(e.target)) place(); };
+    document.addEventListener('pointerdown', outside, true);
+    window.addEventListener('scroll', moved, true);
+    window.addEventListener('resize', moved);
+    quickOpen = { btn, menu, cleanup: () => {
+      document.removeEventListener('pointerdown', outside, true);
+      window.removeEventListener('scroll', moved, true);
+      window.removeEventListener('resize', moved);
+    } };
+    btn.setAttribute('aria-expanded', 'true');
+    (items[options.indexOf(current)] || items[0]).focus({ preventScroll: true });
   }
   function groupLabel(t, row, col, bucket) {
     if ((col.type === 'date' || (col.type === 'computed' && col.format === 'date')) && bucket) {
@@ -2378,7 +2574,7 @@
         const c = sd.columns[k];
         if (c.type === 'computed') return makeField(c.label + ' (calculated)', h('div', { class: 'ca-readonly' }, formatCell('settings', S.data.settings, k))).wrap;
         const input = S.readOnly ? h('div', { class: 'ca-readonly' }, formatCell('settings', S.data.settings, k) || emptyText)
-          : fieldInput(c, S.data.settings[k], v => { pending[k] = v; });
+          : fieldInput(c, S.data.settings[k], v => { pending[k] = v; }, 'settings');
         const focusable = input.matches('input, select, textarea') ? input : input.querySelector('input');
         if (focusable) focusable.dataset.caFocus = 'settings.' + k;
         return makeField(c.label, input, { help: c.help }).wrap;
@@ -2400,9 +2596,13 @@
       document.title = S.builder.previous ? `Change ${S.builder.previous.name}` : 'Carryall tool builder';
       return;
     }
+    closeQuickMenu();
     const panel = S.data ? h('div', S.app.views.length > 1 ? { role: 'tabpanel', id: 'ca-panel', 'aria-labelledby': `ca-tab-${S.tab}` } : null, renderCurrentView()) : renderLanding();
     root.replaceChildren(skip, renderHeader(), renderBanners(), S.data ? renderTabs() : '',
       h('main', { class: 'ca-main', id: 'ca-main', tabindex: '-1' }, panel), renderFooter());
+    // The tab bar scrolls sideways on narrow screens: keep the selected tab in view.
+    const nav = root.querySelector('.ca-tabs'), sel = nav?.querySelector('[aria-selected="true"]');
+    if (sel && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, sel.offsetLeft - nav.offsetLeft - (nav.clientWidth - sel.offsetWidth) / 2);
     if (focusKey) root.querySelector(`[data-ca-focus="${focusKey}"]`)?.focus();
     document.title = S.mode === 'preview' ? `Preview: ${S.app.name}` : `${S.dirty ? '• ' : ''}${S.fileName ? S.fileName + ' – ' : ''}${S.app.name}`;
   }
@@ -2423,8 +2623,12 @@
           h('button', { class: 'ca-btn primary', onclick: downloadTool }, 'Download the tool'))));
     }
     const has = !!S.data;
-    const btn = (label, onclick, opts = {}) => h('button', { class: `ca-btn${opts.primary ? ' primary' : ''}`, onclick, disabled: opts.disabled, title: opts.title }, label);
+    const btn = (label, onclick, opts = {}) => h('button', { class: `ca-btn${opts.primary ? ' primary' : ''}${opts.cls ? ' ' + opts.cls : ''}`, onclick, disabled: opts.disabled, title: opts.title }, label);
+    // On narrow screens Open and Save as move into the More menu, and Undo and Redo show as icons,
+    // so the main actions stay on one row (see .ca-wide-only and .ca-narrow-only in the core styles).
     const menu = h('details', { class: 'ca-menu' }, h('summary', { class: 'ca-btn' }, 'More', h('span', { 'aria-hidden': 'true' }, ' ▾')), h('div', { class: 'ca-menu-list' },
+      h('button', { class: 'ca-narrow-only', onclick: pickAndOpen }, 'Open…'),
+      has && S.app.saveInPlace && h('button', { class: 'ca-narrow-only', onclick: () => save({ as: true }), disabled: S.readOnly }, 'Save as…'),
       has && Object.entries(S.app.tables).map(([k, td]) => h('button', { onclick: () => exportCsv(k) }, `Export ${td.label} (CSV)`)),
       has && h('button', { onclick: exportJson }, 'Export data (JSON)'),
       has && !S.readOnly && h('button', { onclick: pickCombine }, 'Combine with another copy…'),
@@ -2441,14 +2645,14 @@
         h('div', { class: 'ca-titles' },
           h('h1', { class: 'ca-title' }, S.app.name),
           has && h('div', { class: 'ca-meta' }, propsOn() && renderDocLine(), renderFileState())),
-        h('div', { class: 'ca-toolbar', role: 'toolbar', 'aria-label': 'File actions' },
-          btn('Open…', pickAndOpen, { title: 'Open a saved Carryall file, JSON or CSV' }),
+        h('div', { class: 'ca-toolbar ca-file-actions', role: 'toolbar', 'aria-label': 'File actions' },
+          btn('Open…', pickAndOpen, { title: 'Open a saved Carryall file, JSON or CSV', cls: 'ca-wide-only' }),
           has && btn(S.app.saveInPlace ? 'Save' : 'Download', () => save(), { primary: true, disabled: S.readOnly,
             title: !S.app.saveInPlace ? 'Download a copy of this file with your data (Ctrl+S)' : S.handle ? `Save to ${S.handle.name} (Ctrl+S)` : 'Choose where to save (Ctrl+S)' }),
-          has && S.app.saveInPlace && btn('Save as…', () => save({ as: true }), { disabled: S.readOnly }),
+          has && S.app.saveInPlace && btn('Save as…', () => save({ as: true }), { disabled: S.readOnly, cls: 'ca-wide-only' }),
           has && h('div', { class: 'ca-btn-group', role: 'group', 'aria-label': 'History' },
-            btn('Undo', undo, { disabled: !S.undo.length || S.readOnly, title: 'Undo the last change (Ctrl+Z)' }),
-            btn('Redo', redo, { disabled: !S.redo.length || S.readOnly, title: 'Redo (Ctrl+Y)' })),
+            btn([icon('undo'), h('span', { class: 'ca-btn-text' }, 'Undo')], undo, { disabled: !S.undo.length || S.readOnly, title: 'Undo the last change (Ctrl+Z)' }),
+            btn([icon('redo'), h('span', { class: 'ca-btn-text' }, 'Redo')], redo, { disabled: !S.redo.length || S.readOnly, title: 'Redo (Ctrl+Y)' })),
           menu)));
   }
   function renderFileState() {
@@ -2476,10 +2680,11 @@
     const list = [...S.banners];
     if (S.app.home && !S.isHome && !S.homeBannerDismissed && S.mode !== 'preview') {
       list.unshift({ id: 'home', kind: 'info', content: [
-        `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`,
+        h('span', { class: 'ca-wide-only' }, `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`),
+        h('span', { class: 'ca-narrow-only' }, S.isLocal ? 'Saved copy.' : 'A copy.'),
         h('span', { class: 'ca-spacer' }),
         h('button', { class: 'ca-btn primary', onclick: openInHome }, S.data ? 'Open data in latest tool' : 'Go to latest tool'),
-        h('button', { class: 'ca-btn', onclick: () => { S.homeBannerDismissed = true; render(); } }, 'Dismiss')] });
+        h('button', { class: 'ca-btn ca-banner-close', onclick: () => { S.homeBannerDismissed = true; render(); } }, icon('close'), h('span', { class: 'ca-btn-text' }, 'Dismiss'))] });
     }
     return h('div', { class: 'ca-banners' }, list.map(b => h('div', { class: `ca-banner ${b.kind}`, role: 'status' }, wrap(b.content))));
   }
@@ -2496,16 +2701,38 @@
   function renderTabs() {
     if (S.app.views.length < 2) return '';
     const n = S.app.views.length;
-    const go = i => { S.tab = (i + n) % n; render(); document.getElementById(`ca-tab-${S.tab}`)?.focus(); };
+    const go = i => { goTab((i + n) % n); document.getElementById(`ca-tab-${S.tab}`)?.focus(); };
     return h('nav', { class: 'ca-tabs', role: 'tablist', 'aria-label': 'Views' }, S.app.views.map((v, i) =>
       h('button', { class: 'ca-tab', role: 'tab', id: `ca-tab-${i}`, 'aria-selected': String(i === S.tab), 'aria-controls': 'ca-panel',
-        tabindex: i === S.tab ? '0' : '-1', onclick: () => { S.tab = i; render(); },
+        tabindex: i === S.tab ? '0' : '-1', onclick: () => goTab(i),
         onkeydown: e => {
           if (e.key === 'ArrowRight') { e.preventDefault(); go(i + 1); }
           else if (e.key === 'ArrowLeft') { e.preventDefault(); go(i - 1); }
           else if (e.key === 'Home') { e.preventDefault(); go(0); }
           else if (e.key === 'End') { e.preventDefault(); go(n - 1); }
         } }, v.title)));
+  }
+  function goTab(i) {
+    if (i !== S.tab) S.cameFrom = S.tab;
+    S.tab = i;
+    render();
+  }
+  // A table view's "open": show the row on a sheet tab, with focus on the record's heading.
+  function openSheet(tab, id) {
+    const vs = S.viewState[String(tab)] = S.viewState[String(tab)] || {};
+    vs.id = id; vs.opened = id;
+    goTab(tab);
+    document.querySelector('#ca-main .ca-sheet h2')?.focus();
+  }
+  // Back from a sheet: to the tab the person came from when it lists the sheet's records (opening
+  // one brought them here), otherwise to the first tab that does, so Back always leads somewhere
+  // another record can be chosen.
+  function sheetBackTab(view, key) {
+    const here = /^\d+$/.test(key) ? +key : -1;
+    const opens = v => v.type === 'table' && v.open === view.title && v.table === view.table;
+    const lists = i => i !== here && !!S.app.views[i] && (opens(S.app.views[i]) || (S.app.views[i].type === 'dashboard' && (S.app.views[i].blocks || []).some(opens)));
+    if (S.cameFrom != null && lists(S.cameFrom)) return S.cameFrom;
+    return S.app.views.findIndex((_, i) => lists(i));
   }
   function renderCurrentView() {
     const el = h('div');
@@ -2625,6 +2852,7 @@
         } catch (e) { ok(`fixture "${fx.name}"`, false, e.message); }
         finally { S.data = saved; }
       }
+      viewFeatureSelfTest(ok);
       combineSelfTest(ok);
       if (S.data && !temp) {
         const html = buildFile(prepareForSave());
@@ -2643,6 +2871,70 @@
         body: h('table', { class: 'ca-table' }, h('tbody', res.map(r => h('tr', h('td', r.pass ? 'Pass' : UI.pill('Fail', 'red')), h('td', r.name), h('td', { class: 'ca-muted' }, r.detail))))) });
     }
     return { passed: res.length - failed.length, failed: failed.length, results: res };
+  }
+
+  // Core helpers, then the table and sheet view options this tool uses ("open", "quickEdit",
+  // "hiddenColumns", "picker": false), rendered with the first test's rows.
+  function viewFeatureSelfTest(ok) {
+    const refs = [[['ARUP-08', 'ARUP-09'], null, 'ARUP-10'], [['C-099'], null, 'C-100'], [[], 'C-001', 'C-001'], [[], null, null],
+      [['RC-0007', 'RC-0012', 'RC-0003'], null, 'RC-0013'], [['A-5', null, 'note'], null, 'A-6'], [['X-1', 'Y-9'], null, 'Y-10']];
+    const bad = refs.find(([vals, first, want]) => nextRef(vals, first) !== want);
+    ok('NEXTREF continues from the last reference', !bad, bad ? `${JSON.stringify(bad[0])} gave ${JSON.stringify(nextRef(bad[0], bad[1]))}, expected ${JSON.stringify(bad[2])}` : '');
+    const sug = suggestList([' Arup', 'buro happold', 'Arup', '', null, 'arup', 'AECOM ']);
+    ok('suggestions are trimmed, distinct and sorted ignoring case', JSON.stringify(sug) === JSON.stringify(['AECOM', 'Arup', 'arup', 'buro happold']), JSON.stringify(sug));
+    const app = S.app;
+    const list = app.views.flatMap((v, i) => (v.type === 'dashboard' ? (v.blocks || []).map((b, j) => [b, `${i}.${j}`]) : [[v, String(i)]]));
+    const tables = list.filter(([v]) => v.type === 'table' && (v.open || v.quickEdit || v.hiddenColumns));
+    const sheets = list.filter(([v]) => v.type === 'sheet' && v.picker === false);
+    if (!tables.length && !sheets.length) return;
+    const fx = (app.fixtures || []).find(f => (f.doc.app?.schemaVersion || app.schemaVersion) >= app.schemaVersion);
+    const saved = { data: S.data, cameFrom: S.cameFrom, viewState: S.viewState };
+    try {
+      if (fx) { S.data = normalise(clone(fx.doc)); S.viewState = {}; }
+      const probe = h('div');
+      for (const [v, key] of tables) {
+        const td = app.tables[v.table];
+        const name = `view "${v.title || td?.label}"`;
+        if (v.open) ok(`${name} opens the sheet "${v.open}"`, app.views.some(x => x.type === 'sheet' && x.title === v.open && x.table === v.table));
+        for (const k of v.quickEdit || []) ok(`${name} quick edit of ${k} has options`, td?.columns[k]?.type === 'choice' && td.columns[k].options?.length > 0);
+        if (!td || !S.data) continue;
+        probe.textContent = '';
+        renderView(probe, v, `selftest.view.${key}`);
+        const rows = probe.querySelectorAll('tbody tr[data-ca-row]').length;
+        const heads = [...probe.querySelectorAll('thead th')].map(th => th.textContent.replace(/[▲▼]/g, '').trim());
+        if (v.open) {
+          const edits = [...probe.querySelectorAll('tbody .ca-edit-cell button')];
+          ok(`${name} has an edit button on every row`, edits.length === rows && edits.every(b => /^(Edit|View) /.test(b.getAttribute('aria-label') || '')), `${edits.length} buttons for ${rows} rows`);
+        }
+        if (v.quickEdit && !(S.readOnly || td.readOnly || v.readOnly)) {
+          const shown = v.quickEdit.filter(k => heads.includes(td.columns[k]?.label));
+          ok(`${name} quick edit buttons`, probe.querySelectorAll('tbody .ca-quick').length === rows * shown.length, `${probe.querySelectorAll('tbody .ca-quick').length} for ${rows} rows`);
+          // A quick edit saves through the table's checks and onSave rules: they must run for every option.
+          const row = S.data.tables[v.table][0];
+          for (const k of row ? v.quickEdit : []) {
+            let err = '';
+            for (const o of td.columns[k]?.options || []) {
+              try { const draft = { ...clone(row), [k]: o }; if (!Object.keys(validateRow(v.table, draft)).length && typeof td.onSave === 'function') td.onSave(draft, clone(row), makeApi()); }
+              catch (e) { err = `${o}: ${e.message}`; break; }
+            }
+            ok(`${name} quick edit of ${k} runs the checks and onSave rules`, !err, err);
+          }
+        }
+        if (v.hiddenColumns) {
+          const leaked = v.hiddenColumns.filter(k => heads.includes(td.columns[k]?.label) && !(v.columns || []).some(c => c !== k && td.columns[c]?.label === td.columns[k]?.label));
+          ok(`${name} starts with hiddenColumns hidden`, !leaked.length && !!probe.querySelector('.ca-columns'), leaked.join(', '));
+        }
+      }
+      for (const [v, key] of sheets) {
+        if (!S.data || !S.data.tables[v.table]?.length) continue;
+        S.cameFrom = null;
+        probe.textContent = '';
+        renderView(probe, v, `selftest.view.${key}`);
+        const opener = sheetBackTab(v, key) >= 0;
+        ok(`view "${v.title}" shows a Back button instead of the record list`, !opener || (!probe.querySelector('select.ca-sheet-select') && /^Back to /.test(probe.querySelector('.ca-tv-bar .ca-btn')?.textContent || '')));
+      }
+    } catch (e) { ok('table and sheet view options', false, e.message); }
+    finally { S.data = saved.data; S.cameFrom = saved.cameFrom; S.viewState = saved.viewState; }
   }
 
   // Combining copies: separate edits combine in either order, a repeat changes nothing, and
@@ -2720,7 +3012,7 @@
     LEFT: [1, 2, 'text'], RIGHT: [1, 2, 'text'], CONTAINS: [2, 2, 'boolean'], VALUE: [1, 1, 'number'],
     TODAY: [0, 0, 'date'], USER: [0, 0, 'text'], DAYS: [2, 2, 'number'], YEARFRAC: [2, 2, 'number'], EDATE: [2, 2, 'date'],
     ADDDAYS: [2, 2, 'date'], YEAR: [1, 1, 'number'], MONTH: [1, 1, 'number'], DAY: [1, 1, 'number'], DATE: [3, 3, 'date'],
-    NEXTREF: [3, 3, 'text'],
+    NEXTREF: [1, 3, 'text'],
   };
   const FX_ALIASES = { AVG: 'AVERAGE', IFNULL: 'IFBLANK', NVL: 'IFBLANK', ISNULL: 'ISBLANK', ISEMPTY: 'ISBLANK', CONCATENATE: 'CONCAT', LENGTH: 'LEN' };
   const FX_HINTS = {
@@ -3000,10 +3292,10 @@
     const tableForm = FX_TABLE_FNS.includes(name) && head && !!sc.sch.tables[head[0]];
     const anyTable = Object.keys(sc.sch.tables)[0] || 'table';
     if (name === 'COUNT' && !tableForm) fail(`COUNT counts the rows of a table, for example COUNT(${anyTable} WHERE condition).${head ? ` "${head[0]}" is not a table.` : ''}`);
-    if (name === 'NEXTREF' && !tableForm) fail(`NEXTREF needs a table column first, for example NEXTREF(${anyTable}.ref, 'REF-', 3)`);
+    if (name === 'NEXTREF' && !tableForm) fail(`NEXTREF needs a table column first, for example NEXTREF(${anyTable}.ref) or NEXTREF(${anyTable}.ref, 'REF-001')`);
     if (n.where && !tableForm) fail(`WHERE needs a table first, for example SUM(${anyTable}.column WHERE condition).${head ? ` "${head[0]}" is not a table.` : ''}`);
     if (n.args.length < sig[0] || n.args.length > sig[1]) {
-      const want = sig[0] === sig[1] ? `${sig[0]}` : sig[1] === 99 ? `at least ${sig[0]}` : `${sig[0]} or ${sig[1]}`;
+      const want = sig[0] === sig[1] ? `${sig[0]}` : sig[1] === 99 ? `at least ${sig[0]}` : sig[1] - sig[0] > 1 ? `${sig[0]} to ${sig[1]}` : `${sig[0]} or ${sig[1]}`;
       fail(`${name}() needs ${want} value${want === '1' ? '' : 's'} inside its brackets, but has ${n.args.length}`);
     }
     if (tableForm) {
@@ -3023,6 +3315,9 @@
       if ((name === 'SUM' || name === 'AVERAGE' || name === 'NEXTREF') && !n.field) fail(`${name} needs a column after the table name, for example ${name}(${n.table}.${Object.keys(td.cols)[0] || 'column'})`);
       if (n.where) fxCheck(n.where, { ...sc, table: n.table, where: true });
       n.args.slice(1).forEach(a => fxCheck(a, sc));
+      if (name === 'NEXTREF' && n.args.length === 2 && n.args[1].t === 'lit' && !/\d$/.test(String(n.args[1].v ?? '').trim())) {
+        fail(`The first value for NEXTREF must end with a number, for example NEXTREF(${n.table}.${n.field}, 'REF-001')`);
+      }
       if (name === 'MIN' || name === 'MAX') return { type: info.type === 'ref' ? 'any' : info.type };
       return { type: sig[2] };
     }
@@ -3152,6 +3447,7 @@
     if (n.where) rows = rows.filter(r => fxTruthy(fxEval(n.where, { table: n.table, row: r, thisTable: cx.thisTable, thisRow: cx.thisRow })));
     const val = r => (n.field === 'id' ? r.id : rawValue(n.table, r, n.field));
     if (n.fn === 'COUNT') return n.field ? rows.filter(r => !fxBlank(val(r))).length : rows.length;
+    if (n.fn === 'NEXTREF' && n.args.length < 3) return nextRef(rows.map(val), n.args.length > 1 ? fxStr(fxEval(n.args[1], cx)) : null);
     if (n.fn === 'NEXTREF') {
       const prefix = fxStr(fxEval(n.args[1], cx)), width = fxNum(fxEval(n.args[2], cx), n.args[2]);
       const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$');
@@ -3164,6 +3460,22 @@
     if (!vals.length) return null;
     if (n.fn === 'AVERAGE') return vals.reduce((s, v) => s + fxNum(v, n), 0) / vals.length;
     return vals.reduce((m, v) => ((n.fn === 'MIN' ? fxCmp(v, m) < 0 : fxCmp(v, m) > 0) ? v : m));
+  }
+  // NEXTREF(table.column): the prefix comes from the most recently added row whose value ends in a
+  // number, and 1 is added to the highest number used with that prefix, keeping the number of digits
+  // (ARUP-09 gives ARUP-10, C-099 gives C-100). With no such row it gives the first value, or blank.
+  function nextRef(values, first = null) {
+    const split = v => (fxBlank(v) ? null : /^(.*?)(\d+)$/.exec(String(v).trim()));
+    let last = null;
+    for (let i = values.length - 1; i >= 0 && !last; i--) last = split(values[i]);
+    if (!last) return fxBlank(first) ? null : first;
+    const prefix = last[1];
+    let top = last[2];
+    for (const v of values) {
+      const m = split(v);
+      if (m && m[1] === prefix && BigInt(m[2]) > BigInt(top)) top = m[2];
+    }
+    return prefix + String(BigInt(top) + 1n).padStart(top.length, '0');
   }
   function fxCallValue(n, cx) {
     const A = n.args;
@@ -3387,16 +3699,16 @@
   const TABLE_KEYS = ['id', 'label', 'singular', 'description', 'display', 'displayFormula', 'columns', 'checks', 'onSave', 'readOnly'];
   const COL_COMMON = ['id', 'label', 'type', 'required', 'unique', 'help', 'hidden', 'hideInForm', 'mono', 'default', 'defaultFormula'];
   const COL_BY_TYPE = {
-    text: ['maxLength'], longtext: [], number: ['min', 'max', 'decimals', 'step'], currency: ['min', 'max', 'currency', 'step'],
+    text: ['maxLength', 'suggest', 'suggestFrom'], longtext: [], number: ['min', 'max', 'decimals', 'step'], currency: ['min', 'max', 'currency', 'step'],
     percent: ['min', 'max', 'decimals', 'step'], date: [], boolean: ['checkLabel'], choice: ['options', 'colors'],
     ref: ['table', 'display'], computed: ['formula', 'format', 'decimals', 'currency', 'colors', 'colorFormula'],
   };
   const ALL_COL_KEYS = [...new Set([...COL_COMMON, ...Object.values(COL_BY_TYPE).flat()])];
   const VIEW_KEYS = {
-    table: ['table', 'columns', 'sort', 'totals', 'filters', 'where', 'add', 'readOnly', 'preset', 'search'],
+    table: ['table', 'columns', 'hiddenColumns', 'sort', 'totals', 'filters', 'where', 'add', 'readOnly', 'preset', 'search', 'open', 'quickEdit'],
     summary: ['table', 'groupBy', 'bucket', 'metrics', 'chart', 'showTable', 'where', 'sortBy'],
     kpi: ['items'], dashboard: ['blocks'], settings: ['fields', 'intro'],
-    sheet: ['table', 'fields', 'sort', 'where', 'child'],
+    sheet: ['table', 'fields', 'sort', 'where', 'child', 'picker'],
     matrix: ['table', 'rows', 'columns', 'metrics', 'where'],
   };
   const STEP_OPS = {
@@ -3610,6 +3922,7 @@
 
       // Columns (shared by tables and settings)
       const refChecks = [];
+      const suggestChecks = [];
       const checkColumn = (c, where, kind) => {
         if (!isObj(c)) { err(where, 'Each column is an object such as { "id": "title", "label": "Title", "type": "text" }.'); return false; }
         if (typeof c.id !== 'string' || !c.id) { err(where, 'Add an "id": the column\'s key in the saved data, for example "title".'); return false; }
@@ -3629,7 +3942,15 @@
           else { const hint = KEY_HINTS[k], best = closest(k, allowed); err(where, `Unknown property "${k}".${hint ? ' ' + hint : best ? ` Did you mean "${best}"?` : ''}`); }
         }
         for (const k of ['label', 'help']) if (c[k] != null && typeof c[k] !== 'string') err(where, `"${k}" must be text.`);
-        for (const k of ['required', 'unique', 'hidden', 'hideInForm', 'mono']) if (c[k] != null && typeof c[k] !== 'boolean') err(where, `"${k}" must be true or false, without quotes.`);
+        for (const k of ['required', 'unique', 'hidden', 'hideInForm', 'mono', 'suggest']) if (c[k] != null && typeof c[k] !== 'boolean') err(where, `"${k}" must be true or false, without quotes.`);
+        if (c.type === 'text' && (c.suggest != null || c.suggestFrom != null)) {
+          if (kind === 'settings') err(where, 'Suggestions come from the rows of a table, so "suggest" and "suggestFrom" only work on table columns.');
+          else if (c.suggestFrom != null) {
+            if (!Array.isArray(c.suggestFrom) || !c.suggestFrom.length || !c.suggestFrom.every(x => typeof x === 'string')) err(where, '"suggestFrom" is a list of other columns written "table.column", for example ["comments.raisedBy"].');
+            else suggestChecks.push([c, where]);
+            if (c.suggest === false) warn(where, '"suggest" is false, so "suggestFrom" is ignored. Remove one of them.');
+          }
+        }
         for (const k of ['min', 'max', 'step']) if (c[k] != null && typeof c[k] !== 'number') err(where, `"${k}" must be a number, without quotes.`);
         if (c.decimals != null && !(Number.isInteger(c.decimals) && c.decimals >= 0 && c.decimals <= 10)) err(where, '"decimals" must be a whole number from 0 to 10.');
         if (c.type === 'choice') {
@@ -3741,6 +4062,15 @@
         state[node] = 2;
       };
       Object.keys(deps).forEach(k => visit(k, []));
+      for (const [c, where] of suggestChecks) for (const src of c.suggestFrom) {
+        const [tk, ck, more] = src.split('.');
+        const st = sch.tables[tk];
+        if (!st) { err(where, unknownMsg(`table "${tk}" in "suggestFrom"`, tk, Object.keys(sch.tables), 'Write each entry as "table.column".')); continue; }
+        if (!ck || more != null) { err(where, `Write the "suggestFrom" entry "${src}" as "table.column", for example "${tk}.${Object.keys(st.cols)[0] || 'name'}".`); continue; }
+        const sc = st.cols[ck];
+        if (!sc) err(where, unknownMsg(`column "${ck}" in table "${tk}" (in "suggestFrom")`, ck, Object.keys(st.cols)));
+        else if (!['text', 'longtext', 'choice'].includes(sc.type) && !(sc.type === 'computed' && (sc.format || sc._type) === 'text')) err(where, `"suggestFrom" can only use text and choice columns, but "${src}" is ${sc.type === 'computed' ? 'calculated as something other than text' : sc.type}.`);
+      }
 
       for (const t of tables) {
         const td = sch.tables[tid(t)];
@@ -3783,6 +4113,8 @@
 
       // Views
       const isNum = info => ['number', 'any'].includes(info.type);
+      const topViews = Array.isArray(spec.views) ? spec.views.filter(isObj) : [];
+      const allViews = topViews.flatMap(x => (x.type === 'dashboard' && Array.isArray(x.blocks) ? [x, ...x.blocks.filter(isObj)] : [x]));
       const checkView = (v, where, inDashboard) => {
         if (!isObj(v)) { err(where, 'Each view is an object with a "type", such as { "type": "table", "title": "Items", "table": "items" }.'); return; }
         const type = v.type;
@@ -3839,6 +4171,29 @@
             listOk(v.totals, 'totals', 'totalled');
             listOk(v.filters, 'filters');
             sortOk(v.sort, td, v.table);
+            listOk(v.hiddenColumns, 'hiddenColumns');
+            if (td && Array.isArray(v.hiddenColumns)) {
+              const listed = Array.isArray(v.columns) ? v.columns : Object.keys(td.cols).filter(k => !td.cols[k].hidden);
+              if (listed.length && listed.every(k => v.hiddenColumns.includes(k))) err(where, 'Every column is in "hiddenColumns". Leave at least one column showing.');
+            }
+            if (v.quickEdit != null) {
+              if (!Array.isArray(v.quickEdit)) err(where, '"quickEdit" is a list of choice columns that can be changed from the table, for example ["status"].');
+              else if (td) v.quickEdit.forEach(k => {
+                if (!colOk(k, 'quickEdit column')) return;
+                if (td.cols[k].type !== 'choice') err(where, `"${k}" is a ${td.cols[k].type} column. "quickEdit" only works for choice columns.`);
+                else if (Array.isArray(v.columns) && !v.columns.includes(k) && !(Array.isArray(v.hiddenColumns) && v.hiddenColumns.includes(k))) warn(where, `"${k}" is in "quickEdit" but not in "columns", so it cannot be changed from the table. Add it to "columns".`);
+              });
+              if (v.readOnly === true) warn(where, '"quickEdit" does nothing in a read-only view.');
+            }
+            if (v.open != null) {
+              const sheets = topViews.filter(x => x.type === 'sheet');
+              const target = typeof v.open === 'string' ? sheets.find(x => x.title === v.open) : null;
+              if (typeof v.open !== 'string' || !v.open) err(where, '"open" is the title of a sheet view, for example "Comment sheet".');
+              else if (!target) {
+                err(where, sheets.length ? unknownMsg(`sheet view "${v.open}"`, v.open, sheets.map(x => x.title).filter(Boolean), '"open" is the title of a sheet view (its tab) that shows the same table.')
+                  : `"open" names a sheet view, but there is none. Add a view such as { "type": "sheet", "title": "${v.open}", "table": "${v.table}" }.`);
+              } else if (target.table !== v.table) err(where, `The sheet "${v.open}" shows "${target.table}", but this view lists "${v.table}". "open" needs a sheet of the same table.`);
+            }
             if (v.preset != null) { if (!isObj(v.preset)) err(where, '"preset" is an object of column values for new rows.'); else Object.keys(v.preset).forEach(k => colOk(k, 'preset column')); }
             for (const k of ['add', 'readOnly', 'search']) if (v[k] != null && typeof v[k] !== 'boolean') err(where, `"${k}" must be true or false.`);
             break;
@@ -3875,6 +4230,10 @@
           case 'sheet': {
             listOk(v.fields, 'fields');
             sortOk(v.sort, td, v.table);
+            if (v.picker != null && typeof v.picker !== 'boolean') err(where, '"picker" must be true or false.');
+            if (v.picker === false && !allViews.some(x => x.type === 'table' && x.open === v.title && x.table === v.table)) {
+              warn(where, `"picker" is false, but no table view opens this sheet, so it shows the record list anyway. Add "open": "${v.title || 'this sheet\'s title'}" to a table view of "${v.table}".`);
+            }
             if (v.child == null) break;
             const cw = `${where} › child`;
             if (!isObj(v.child)) { err(cw, '"child" is { "table", "link", "columns" }: the rows listed under each record.'); break; }
@@ -4310,8 +4669,9 @@
         { id: 'open', label: 'Open snags', type: 'computed', format: 'integer', formula: "COUNT(snags WHERE area = this AND status <> 'Closed')" },
       ] },
       { id: 'snags', label: 'Snags', singular: 'snag', display: 'ref', columns: [
-        { id: 'ref', label: 'Ref', type: 'text', required: true, unique: true, mono: true, defaultFormula: "NEXTREF(snags.ref, 'SN-', 3)" },
+        { id: 'ref', label: 'Ref', type: 'text', required: true, unique: true, mono: true, defaultFormula: "NEXTREF(snags.ref, 'SN-001')" },
         { id: 'area', label: 'Area', type: 'ref', table: 'areas', required: true },
+        { id: 'owner', label: 'Who fixes it', type: 'text', suggest: true },
         { id: 'description', label: 'Description', type: 'longtext', required: true },
         { id: 'raised', label: 'Raised', type: 'date', defaultFormula: 'TODAY()' },
         { id: 'status', label: 'Status', type: 'choice', options: ['Open', 'Fixed', 'Closed'], default: 'Open', colors: { Open: 'blue', Fixed: 'purple', Closed: 'green' } },
@@ -4327,7 +4687,7 @@
         ] },
         { type: 'summary', title: 'Open snags by area', table: 'snags', groupBy: 'area', where: "status <> 'Closed'" },
       ] },
-      { type: 'table', title: 'Snags', table: 'snags', sort: { column: 'ref', dir: 'asc' }, filters: ['area', 'status'] },
+      { type: 'table', title: 'Snags', table: 'snags', sort: { column: 'ref', dir: 'asc' }, filters: ['area', 'status'], quickEdit: ['status'] },
       { type: 'table', title: 'Areas', table: 'areas' },
       { type: 'settings', title: 'Settings' },
     ],
@@ -4339,9 +4699,10 @@
       { table: 'snags', row: 's1', field: 'due', equals: '2020-01-15' },
       { table: 'snags', row: 's1', field: 'overdue', equals: 'Overdue' },
       { table: 'areas', row: 'a1', field: 'open', equals: 1 },
+      { formula: "NEXTREF(snags.ref) = 'SN-002'" },
     ] }],
   };
-  const STATE_KEYS = ['app', 'spec', 'data', 'dirty', 'readOnly', 'fileName', 'handle', 'undo', 'redo', 'tab', 'viewState', 'banners', 'actor', 'baseline', 'baselineFor'];
+  const STATE_KEYS = ['app', 'spec', 'data', 'dirty', 'readOnly', 'fileName', 'handle', 'undo', 'redo', 'tab', 'cameFrom', 'viewState', 'banners', 'actor', 'baseline', 'baselineFor'];
   const saveState = () => Object.fromEntries(STATE_KEYS.map(k => [k, S[k]]));
   const restoreState = st => { for (const k of STATE_KEYS) S[k] = st[k]; };
 
@@ -4504,7 +4865,7 @@
         h('h2', b.previous ? `Change ${b.previous.name}` : 'Build a tool from a definition'),
         h('p', { id: 'ca-spec-help' }, b.previous
           ? 'This is the current definition. Paste it into Copilot with the change you want, then paste Copilot\'s reply here and check it. Increase "version" for every change.'
-          : ['Ask the Carryall Tool Builder agent in Copilot to write a tool definition, then paste its reply here. ',
+          : ['Paste a tool definition here, such as one written by Copilot. ',
             h('a', { href: GUIDE_URL, target: '_blank', rel: 'noopener' }, 'How to build a tool with Copilot'), '.']),
         h('label', { for: 'ca-spec-input', class: 'ca-label' }, 'Tool definition (JSON)'),
         input,
@@ -4533,9 +4894,19 @@
     if (!td) throw new Error(`Table "${t}" is not defined`);
     const vs = S.viewState[key] = S.viewState[key] || {};
     let recs = tableRows(t).filter(r => !view.where || view.where(r, api));
+    // A row opened from a table view is shown even when the sheet's "where" leaves it out.
+    const opened = vs.opened && !recs.some(r => r.id === vs.opened) ? rowById(t, vs.opened) : null;
+    if (opened) recs.push(opened);
     recs = view.sort ? sortRows(t, recs, view.sort) : [...recs].sort((a, b) => displayOf(t, a).localeCompare(displayOf(t, b), undefined, { numeric: true }));
+    // "picker": false swaps the record list for a Back button (when there is somewhere to go back to).
+    const backTab = view.picker === false ? sheetBackTab(view, key) : -1;
+    const back = backTab >= 0 && h('button', { class: 'ca-btn', onclick: () => {
+      const id = vs.id;
+      goTab(backTab);
+      document.querySelector(`#ca-main tr[data-ca-row="${CSS.escape(String(id))}"]`)?.focus();
+    } }, `Back to ${S.app.views[backTab].title}`);
     if (!recs.length) {
-      el.append(UI.card(view.title || td.label, h('p', { class: 'ca-muted' }, `No ${td.label.toLowerCase()} yet.`),
+      el.append(back ? h('div', { class: 'ca-tv-bar' }, back) : '', UI.card(view.title || td.label, h('p', { class: 'ca-muted' }, `No ${td.label.toLowerCase()} yet.`),
         !S.readOnly && !td.readOnly && h('button', { class: 'ca-btn primary', onclick: () => openForm(t) }, `+ Add ${td.singular}`)));
       return;
     }
@@ -4554,16 +4925,17 @@
     const selId = `ca-sheet-${key}`;
     const ro = S.readOnly;
     el.append(
-      h('div', { class: 'ca-tv-bar' },
-        h('label', { for: selId, class: 'ca-visually-hidden' }, `Choose ${td.singular}`),
-        h('select', { class: 'ca-select ca-sheet-select', id: selId, dataset: { caFocus: selId }, onchange: e => { vs.id = e.target.value; render(); } },
-          recs.map(r => h('option', { value: r.id, selected: r.id === rec.id }, displayOf(t, r)))),
+      h('div', { class: 'ca-tv-bar ca-sheet-bar' },
+        back || [
+          h('label', { for: selId, class: 'ca-visually-hidden' }, `Choose ${td.singular}`),
+          h('select', { class: 'ca-select ca-sheet-select', id: selId, dataset: { caFocus: selId }, onchange: e => { vs.id = e.target.value; vs.opened = null; render(); } },
+            recs.map(r => h('option', { value: r.id, selected: r.id === rec.id }, displayOf(t, r))))],
         h('span', { class: 'ca-spacer' }),
         h('button', { class: 'ca-btn', onclick: () => openForm(t, rec.id) }, ro || td.readOnly ? `View ${td.singular}` : `Edit ${td.singular}`),
         ct && !ro && !ct.readOnly && h('button', { class: 'ca-btn', onclick: () => openForm(ch.table, null, { [ch.link]: rec.id }) }, `+ Add ${ct.singular}`),
-        h('button', { class: 'ca-btn primary', onclick: () => window.print() }, 'Print')),
+        h('button', { class: 'ca-btn primary ca-wide-only', onclick: () => window.print() }, 'Print')),
       h('div', { class: 'ca-card ca-sheet' },
-        h('h2', `${view.title || td.singular}: ${displayOf(t, rec)}`),
+        h('h2', { tabindex: '-1' }, `${view.title || td.singular}: ${displayOf(t, rec)}`),
         (p.projectNumber || p.projectName || rev) && h('p', { class: 'ca-muted' },
           [[p.projectNumber, p.projectName].filter(Boolean).join(' '), rev && `Revision ${rev.rev}, ${formatAs('date', rev.date)}`].filter(Boolean).join(' · ')),
         h('dl', { class: 'ca-sheet-fields' }, fields.map(c => h('div', { class: c.type === 'longtext' ? 'wide' : null },

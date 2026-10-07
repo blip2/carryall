@@ -4,12 +4,17 @@ Single-file HTML tools that carry their own data. Each tool is one `.html` file 
 the structured data, the viewer and the editor. There's no server or database, and it keeps
 working for as long as browsers open HTML.
 
-**Try it:** [blip2.github.io/carryall](https://blip2.github.io/carryall/) has the example tools, sample projects, the tool
-builder and the [guide to building a tool with Copilot](https://blip2.github.io/carryall/guide.html).
+**Try it:** [blip2.github.io/carryall](https://blip2.github.io/carryall/) has the example tools, sample projects and the
+tool builder.
 
-- **No code**: a tool is a JSON **tool definition** (tables, columns, spreadsheet-like formulas, views).
-  Microsoft 365 Copilot writes it; the **tool builder** (open `carryall.html` in a browser) checks it,
-  names every problem in words Copilot can act on, previews it and downloads the finished tool.
+- **Two ways to define a tool**: a JSON **tool definition** (tables, columns, spreadsheet-like formulas,
+  views) for simpler tools, or a **JavaScript app** for complex ones (custom screens and logic).
+  The core checks every part of a definition and names each problem in words an assistant can act on.
+- **Built with an assistant**: GitHub Copilot in VS Code edits the file, runs `tools/check.mjs` and fixes
+  what it finds, and chooses between a definition and JavaScript (see [AGENTS.md](AGENTS.md) and
+  [docs/BUILD-WITH-GITHUB-COPILOT.md](docs/BUILD-WITH-GITHUB-COPILOT.md)). Without VS Code, a chat
+  assistant such as Microsoft 365 Copilot writes a definition and the **tool builder** (open
+  `carryall.html` in a browser) checks it, previews it and downloads the finished tool.
 
 - **Hosted home copy**: the latest version of each tool lives at a URL (e.g. an Azure Static Web App).
   People open it, load a saved file, edit it and **download** an updated copy.
@@ -29,27 +34,27 @@ builder and the [guide to building a tool with Copilot](https://blip2.github.io/
 |---|---|
 | `carryall.html` | Blank template. Opened in a browser, it is the tool builder. |
 | `src/core.js`, `src/core.css`, `src/readme.txt` | The framework, including the formula language, the definition checker and the tool builder. Edit here only. |
-| `src/definition-reference.md` | The tool definition reference. Embedded in every file's README, the Copilot knowledge file and the site. |
-| `tools/sync-core.mjs` | Stamps the core + README into the template and every app file, and generates the Copilot knowledge file. |
+| `src/definition-reference.md` | The tool definition reference. Embedded in every file's README, the Microsoft 365 Copilot knowledge file and the site. |
+| `tools/sync-core.mjs` | Stamps the core + README into the template and every app file, and generates the Microsoft 365 Copilot knowledge file. |
 | `tools/build-site.mjs`, `site/`, `.github/workflows/pages.yml` | Publishes the examples, the guide and the reference to GitHub Pages on every push to `main`, rewriting `home` URLs to the Pages address. |
 | `tools/dev-server.mjs` | Local "home" server for testing (`http://localhost:8765/`). |
-| `tools/check.mjs` | Checks a tool definition in the terminal (`--selftest` also runs the self-test in headless Chromium). |
+| `tools/check.mjs` | Checks a tool definition in the terminal (`--selftest` also runs the self-test in headless Chromium, which is the check for a JavaScript app). |
 | `tools/combine.mjs` | Combines copies of a document in the terminal (headless Chromium), the same way as the tool does. |
+| `AGENTS.md` | Instructions for AI agents building a tool, including when to use a definition and when a JavaScript app. |
 | `.github/copilot-instructions.md`, `.github/prompts/` | GitHub Copilot instructions and `/new-tool` and `/change-tool` prompts for VS Code. See `docs/BUILD-WITH-GITHUB-COPILOT.md`. |
 | `examples/asset-register.html` | Example tool definition: schema v3, two migrations with tests, dashboards, settings. |
 | `examples/fixtures/asset-register-v1-saved.html` | An *old* saved copy (v1.0, schema 1, from when it was a JavaScript app) for testing upgrades. |
 | `examples/review-tracker.html` | Example tool definition: design review tracker with disciplines, review packages, comments and responses, a review matrix and a printable comment sheet. |
 | `examples/fixtures/review-tracker-sample.html` | A populated review tracker (9 reviews, 43 comments) to explore. |
-| `docs/CREATE-A-TOOL-WITH-COPILOT.md` | Guide for building a tool with Microsoft 365 Copilot, plus agent setup. Published as the site's guide page. |
-| `docs/BUILD-WITH-GITHUB-COPILOT.md` | Guide for power users building tools with GitHub Copilot agent mode in VS Code. Published as a site page. |
-| `docs/copilot/` | Copilot agent instructions (under the 8,000-character limit) and the generated knowledge file. |
+| `docs/BUILD-WITH-GITHUB-COPILOT.md` | Guide to building tools with GitHub Copilot agent mode in VS Code, as definitions or JavaScript apps. Published as a site page. |
+| `docs/CREATE-A-TOOL-WITH-COPILOT.md` | Guide to building a tool definition with Microsoft 365 Copilot and the tool builder, plus agent setup. Published as a site page. |
+| `docs/copilot/` | Microsoft 365 Copilot agent instructions (under the 8,000-character limit) and the generated knowledge file. |
 | `docs/STYLE-GUIDE.md` | UI style and accessibility rules (WCAG 2.1 AA) that the core implements and apps must follow. |
 | `deploy/staticwebapp.config.json` | Sample Azure Static Web Apps config. |
-| `AGENTS.md` | Instructions for AI tools building a new Carryall app. |
 
 The full reference is the README comment at the top of every Carryall file, generated from
-`src/readme.txt` and `src/definition-reference.md`. JavaScript apps (`Carryall.app({...})`) are still
-supported for developers who need custom views in code.
+`src/readme.txt` and `src/definition-reference.md`. It covers tool definitions and JavaScript apps
+(`Carryall.app({...})`); [AGENTS.md](AGENTS.md) says when to use each.
 
 ## Working on the core
 
@@ -91,7 +96,9 @@ set `home` in the app definition to its URL, and optionally publish a `<app>.ver
 
 ## Status
 
-Phase 0 prototype, core 0.3.0 (adds combining copies). Tested in Chromium: self-test, v1 to v3 migration, edit, download
+Phase 0 prototype, core 0.4.0 (adds suggestions on text columns, `NEXTREF(table.column)`, tables that open
+a sheet, quick edits from a table, hidden columns and a more compact toolbar on narrow screens; 0.3.0
+added combining copies). Tested in Chromium: self-test, v1 to v3 migration, edit, download
 round trip, document properties, check fingerprint, recovery, keyboard use of tabs, sorting and forms, and the
 tool builder (check, copy problems, preview, download, change a tool). **Not yet tested:** the pop-up hand-off
 and save-in-place in a real Edge window, opening files from SharePoint/OneDrive, or the Copilot agent with the

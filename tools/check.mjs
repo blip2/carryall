@@ -8,6 +8,9 @@
 //   node tools/check.mjs examples/my-tool.html --selftest
 //        also run the full self-test (renders every view, runs the tests and migrations) in
 //        headless Chromium. Needs Playwright: npm install --no-save playwright && npx playwright install chromium
+//   node tools/check.mjs examples/my-js-app.html --selftest
+//        a JavaScript app (Carryall.app in #ca-app, #ca-spec null) has no definition to check, so
+//        only the self-test runs: it renders every view and runs the app's fixtures and migrations.
 
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -28,11 +31,23 @@ const SPEC_RE = /^<script type="application\/json" id="ca-spec">\n?([\s\S]*?)\n?
 const source = readFileSync(resolve(file), 'utf8').replace(/\r\n/g, '\n');
 const isHtml = /\.html?$/i.test(file);
 let text = source;
+let jsApp = false;
 if (isHtml) {
   const m = SPEC_RE.exec(source);
-  if (!m) fail(`${file} has no <script type="application/json" id="ca-spec"> block. Copy carryall.html and put the definition there.`);
-  text = m[1].trim();
-  if (!text || text === 'null') fail(`${file} has no tool definition yet: #ca-spec is null.`);
+  const app = /^<script id="ca-app">\n?([\s\S]*?)<\/script>/m.exec(source);
+  jsApp = !!app && /\bCarryall\.app\s*\(/.test(app[1].replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''));
+  if (!m && !jsApp) fail(`${file} has no <script type="application/json" id="ca-spec"> block. Copy carryall.html and put the definition there.`);
+  text = m ? m[1].trim() : '';
+  if ((!text || text === 'null') && !jsApp) fail(`${file} has no tool definition yet: #ca-spec is null.`);
+  if (text && text !== 'null' && jsApp) fail(`${file} has both a tool definition in #ca-spec and a JavaScript app in #ca-app. Use one: set #ca-spec to null for a JavaScript app.`);
+}
+
+if (jsApp) {
+  console.log('JavaScript app: there is no tool definition to check, so the self-test does the checking.');
+  if (!selftest) {
+    console.log('Run with --selftest to render every view and run the fixtures and migrations.');
+    process.exit(0);
+  }
 }
 
 // Run the core with just enough of a browser around it to use its definition checker.
@@ -46,7 +61,7 @@ const sandbox = {
 sandbox.window = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(coreJs, sandbox, { filename: 'src/core.js' });
-const result = sandbox.Carryall.checkDefinition(text);
+const result = jsApp ? { problems: [], definition: null } : sandbox.Carryall.checkDefinition(text);
 
 const groups = { error: [], warning: [], fixed: [] };
 for (const p of result.problems) groups[p.level]?.push(p);
@@ -55,7 +70,7 @@ if (groups.error.length) console.log(`${groups.error.length} problem${groups.err
 if (groups.warning.length) console.log(`\nSuggestions:\n${groups.warning.map(line).join('\n')}`);
 if (groups.fixed.length) console.log(`\nTidied automatically (the tool builder would save the corrected definition):\n${groups.fixed.map(line).join('\n')}`);
 if (groups.error.length) process.exit(1);
-console.log(`${groups.warning.length || groups.fixed.length ? '\n' : ''}Definition OK: ${result.definition.name} ${result.definition.version}.`);
+if (!jsApp) console.log(`${groups.warning.length || groups.fixed.length ? '\n' : ''}Definition OK: ${result.definition.name} ${result.definition.version}.`);
 
 if (!selftest) {
   console.log('Run with --selftest to render every view and run the tests and migrations.');
@@ -80,7 +95,10 @@ try {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(pathToFileURL(target).href);
-  await page.waitForFunction(() => window.Carryall && window.Carryall._state.app);
+  await page.waitForFunction(() => window.Carryall && (window.Carryall._state.app || window.Carryall._state.defineError), null, { timeout: 15000 })
+    .catch(() => fail('The tool did not start. Open it in a browser and look in the console for errors.'));
+  const defineError = await page.evaluate(() => window.Carryall._state.defineError?.message);
+  if (defineError) fail(`The app definition has an error: ${defineError}`);
   const st = await page.evaluate(() => window.Carryall.selfTest(false));
   const failed = st.results.filter(r => !r.pass);
   console.log(`Self-test: ${st.passed} of ${st.passed + st.failed} checks passed.`);

@@ -7,7 +7,14 @@ columns, calculations and views. There is no JavaScript to write. Open the blank
 To change a tool later, open it and choose **More, Change this tool**.
 
 The builder checks everything below and names each problem with a fix. Its **Copy problems for
-Copilot** button copies them in a form Copilot can act on.
+Copilot** button copies them in a form Copilot can act on. In a code editor, `node tools/check.mjs`
+runs the same checks.
+
+A definition can only use what this reference lists. A tool that needs more, such as a custom screen
+(a timeline, calendar or board), calculations that need loops or text matching, or actions that change
+many rows at once, is built as a JavaScript app instead, with a coding agent such as GitHub Copilot
+in VS Code (see `AGENTS.md`). Never work round a missing feature with extra columns or keys that are
+not listed here.
 
 ## The rules that matter most
 
@@ -54,7 +61,7 @@ Copilot** button copies them in a form Copilot can act on.
 | `description` | no | One line shown on the start screen. |
 | `locale`, `currency` | no | Defaults `"en-GB"` and `"GBP"`. |
 | `fileName` | no | Default file name for downloads, without `.html`. |
-| `home` | no | Web address of the hosted copy. Saved copies offer to open their data there. |
+| `home` | no | Web address of the hosted copy, such as `https://tools.example.com/snagging-tracker.html`. Saved copies offer to open their data there. Leave it out until the tool is hosted: without it, nothing offers a latest tool. An address on your own computer (`localhost`) is only used while testing from that address. |
 | `versionUrl` | no | Web address of a JSON file `{ "version": "1.2.0" }` used to tell saved copies an update exists. |
 | `identity` | no | `"azure-swa"` records the signed-in user when hosted on Azure Static Web Apps. |
 | `saveInPlace` | no | `true` lets Edge and Chrome save back to the opened file. Default is a download. |
@@ -105,11 +112,11 @@ columns (see below), except that settings cannot be `ref` or `computed`. Formula
 Keys every column can have: `id`, `label`, `type`, `required` (true or false), `unique`, `help`
 (guidance shown under the field), `hidden` (never shown), `hideInForm`, `mono` (monospace, for
 references and drawing numbers), `default` (a fixed value) and `defaultFormula` (a formula such
-as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-', 3)"`).
+as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`).
 
 | Type | Stores | Extra keys |
 |:-|:-|:-|
-| `text` | One line of text | `maxLength` |
+| `text` | One line of text | `maxLength`, `suggest`, `suggestFrom` |
 | `longtext` | Several lines of text | |
 | `number` | A number | `min`, `max`, `decimals`, `step` |
 | `currency` | Money as a plain number, such as 1234.5 | `min`, `max`, `currency` |
@@ -126,6 +133,15 @@ as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-', 3)"`).
   boolean. Without it, Carryall works it out from the formula.
 - `colorFormula` (calculated columns) returns a colour name, such as `"IF(overdue > 0, 'red', '')"`.
 - A `ref` column's `display` shows one column of the linked row in tables, such as `"display": "ref"`.
+- `"suggest": true` on a text column offers the values already typed in that column as the person types
+  (trimmed, each value once, in A to Z order). Any other value can still be typed. `suggestFrom` adds
+  the values of other text or choice columns, written `"table.column"`. Use it for names and
+  organisations that repeat, rather than a `choice` column whose list would keep growing:
+
+```json
+{ "id": "actionBy", "label": "Action by", "type": "text", "suggest": true,
+  "suggestFrom": ["comments.raisedByOrg", "responses.organisation"] }
+```
 
 ## Formulas
 
@@ -179,8 +195,16 @@ dates taken apart give days (`TODAY() - raised`). Compare dates with `<` and `>`
 | Numbers | `ROUND(x, places)`, `ROUNDUP`, `ROUNDDOWN`, `CEILING(x, step)`, `FLOOR(x, step)`, `INT`, `ABS`, `SQRT`, `POWER(x, y)`, `MOD(x, y)`, `MIN(a, b, ...)`, `MAX(a, b, ...)`, `SUM(a, b, ...)`, `AVERAGE(a, b, ...)` |
 | Text | `CONCAT(a, b, ...)`, `LEN`, `UPPER`, `LOWER`, `TRIM`, `LEFT(text, n)`, `RIGHT(text, n)`, `CONTAINS(text, part)`, `VALUE(text)` |
 | Dates | `TODAY()`, `DAYS(end, start)`, `YEARFRAC(start, end)`, `EDATE(date, months)`, `ADDDAYS(date, days)`, `YEAR`, `MONTH`, `DAY`, `DATE(year, month, day)` |
-| Tables | `SUM`, `COUNT`, `AVERAGE`, `MIN`, `MAX` as above; `NEXTREF(table.column, 'PREFIX-', digits)` gives the next reference, such as SN-004 |
+| Tables | `SUM`, `COUNT`, `AVERAGE`, `MIN`, `MAX` as above; `NEXTREF` gives the next reference (see below) |
 | Other | `USER()` is the name of the person using the tool |
+
+**Next reference**: `NEXTREF(table.column)` continues from the references already in the column. It
+takes the most recently added reference that ends in a number, and adds 1 to the highest number used
+with the same prefix, keeping the number of digits: `ARUP-09` gives `ARUP-10`, `C-099` gives `C-100`.
+While the table is empty it gives blank, or the first value if you add one:
+`NEXTREF(comments.ref, 'C-001')`. `NEXTREF(table.column, 'PREFIX-', digits)` still works, and always
+uses that prefix: `NEXTREF(snags.ref, 'SN-', 3)` gives SN-004 after SN-003. Use NEXTREF in a
+column's `defaultFormula`.
 
 Not available: SUMIF, COUNTIF, VLOOKUP, XLOOKUP and similar. Use `SUM(table.column WHERE ...)`,
 `COUNT(table WHERE ...)` and links (`site.name`) instead.
@@ -226,7 +250,21 @@ Views are the tabs, in order. Without `views`, each table gets a plain table vie
 
 Optional: `columns` (default all), `sort`, `filters` (drop-down filters), `totals` (number columns),
 `where`, `add: false` (no Add button), `readOnly: true`, `search: false`, `preset` (values for new
-rows, such as `{ "status": "Open" }`).
+rows, such as `{ "status": "Open" }`), and:
+
+- `quickEdit`: choice columns that can be changed straight from the table, such as `["status"]`.
+  Selecting the value opens a short list of the options; choosing one saves the row as the form
+  would, so checks, onSave rules and undo all apply. If a check fails, the form opens to show why.
+- `hiddenColumns`: columns that start hidden. A Columns button lets people show them (and hide
+  others). The choice is kept until the browser tab is closed. List them in `columns` too to set
+  where they appear; otherwise they go at the end.
+- `open`: the title of a sheet view of the same table. Selecting a row then shows it on that sheet
+  tab instead of opening the form, and an edit button at the start of each row opens the form.
+
+```json
+{ "type": "table", "title": "Reviews", "table": "reviews", "columns": ["ref", "title", "status", "due"],
+  "open": "Review sheet", "quickEdit": ["status"], "hiddenColumns": ["due"] }
+```
 
 **summary**: rows grouped by a column, with a bar chart and a table of totals.
 
@@ -269,6 +307,14 @@ comment sheets, schedules and reports.
 ```
 
 `child.link` is the `ref` column in the child table that points to this view's table.
+
+`"picker": false` hides the list for choosing a record and shows a Back button instead, which returns
+to the table the person came from. Use it with a table view whose `open` names this sheet, so the
+table is where records are chosen:
+
+```json
+{ "type": "sheet", "title": "Review sheet", "table": "reviews", "picker": false, "fields": ["title", "status"] }
+```
 
 **matrix**: a cross-tab. `rows` and `columns` are columns (or formulas, often links followed with a dot)
 whose values label the rows and columns. Each cell shows the metrics; select it to see the rows.
