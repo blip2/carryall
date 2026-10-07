@@ -148,7 +148,7 @@ not listed here.
 | `description` | no | One line shown on the start screen. |
 | `locale`, `currency` | no | Defaults `"en-GB"` and `"GBP"`. |
 | `fileName` | no | Default file name for downloads, without `.html`. |
-| `home` | no | Web address of the hosted copy. Saved copies offer to open their data there. |
+| `home` | no | Web address of the hosted copy, such as `https://tools.example.com/snagging-tracker.html`. Saved copies offer to open their data there. Leave it out until the tool is hosted: without it, nothing offers a latest tool. An address on your own computer (`localhost`) is only used while testing from that address. |
 | `versionUrl` | no | Web address of a JSON file `{ "version": "1.2.0" }` used to tell saved copies an update exists. |
 | `identity` | no | `"azure-swa"` records the signed-in user when hosted on Azure Static Web Apps. |
 | `saveInPlace` | no | `true` lets Edge and Chrome save back to the opened file. Default is a download. |
@@ -2060,6 +2060,8 @@ body.ca-dragging::after {
       home: null, versionUrl: null, identity: null, migrations: {}, fixtures: [], views: [],
       ...def,
     };
+    app.home = hostedUrl(app.home);
+    app.versionUrl = hostedUrl(app.versionUrl);
     app.tables = {};
     for (const [tk, t] of Object.entries(keyed(def.tables, 'Table', fail))) app.tables[tk] = normTable(tk, t, fail);
     if (def.onNew != null && typeof def.onNew !== 'function') fail('"onNew" must be a function (doc, api) => { ... }');
@@ -2074,6 +2076,16 @@ body.ca-dragging::after {
     if (!app.views.length) app.views = Object.keys(app.tables).map(t => ({ type: 'table', table: t }));
     app.views = app.views.map((v, i) => ({ title: v.title || (v.table && app.tables[v.table]?.label) || `View ${i + 1}`, ...v }));
     return app;
+  }
+  // "home" and "versionUrl" only count when they point somewhere others can reach. An address on
+  // this computer (localhost, used by tools/dev-server.mjs while testing) is ignored unless the
+  // tool is being served from that same address, so copies shared with others never offer it.
+  function hostedUrl(u) {
+    if (typeof u !== 'string' || !u.trim()) return null;
+    let url;
+    try { url = new URL(u, location.href); } catch { return null; }
+    const local = /^(localhost|127(\.\d+){3}|0\.0\.0\.0|\[::1\])$/i.test(url.hostname) || /\.localhost$/i.test(url.hostname);
+    return local && url.hostname !== location.hostname ? null : u;
   }
   function normTable(key, t, fail) {
     const columns = {};

@@ -61,7 +61,7 @@ not listed here.
 | `description` | no | One line shown on the start screen. |
 | `locale`, `currency` | no | Defaults `"en-GB"` and `"GBP"`. |
 | `fileName` | no | Default file name for downloads, without `.html`. |
-| `home` | no | Web address of the hosted copy. Saved copies offer to open their data there. |
+| `home` | no | Web address of the hosted copy, such as `https://tools.example.com/snagging-tracker.html`. Saved copies offer to open their data there. Leave it out until the tool is hosted: without it, nothing offers a latest tool. An address on your own computer (`localhost`) is only used while testing from that address. |
 | `versionUrl` | no | Web address of a JSON file `{ "version": "1.2.0" }` used to tell saved copies an update exists. |
 | `identity` | no | `"azure-swa"` records the signed-in user when hosted on Azure Static Web Apps. |
 | `saveInPlace` | no | `true` lets Edge and Chrome save back to the opened file. Default is a download. |

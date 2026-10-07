@@ -163,6 +163,8 @@
       home: null, versionUrl: null, identity: null, migrations: {}, fixtures: [], views: [],
       ...def,
     };
+    app.home = hostedUrl(app.home);
+    app.versionUrl = hostedUrl(app.versionUrl);
     app.tables = {};
     for (const [tk, t] of Object.entries(keyed(def.tables, 'Table', fail))) app.tables[tk] = normTable(tk, t, fail);
     if (def.onNew != null && typeof def.onNew !== 'function') fail('"onNew" must be a function (doc, api) => { ... }');
@@ -177,6 +179,16 @@
     if (!app.views.length) app.views = Object.keys(app.tables).map(t => ({ type: 'table', table: t }));
     app.views = app.views.map((v, i) => ({ title: v.title || (v.table && app.tables[v.table]?.label) || `View ${i + 1}`, ...v }));
     return app;
+  }
+  // "home" and "versionUrl" only count when they point somewhere others can reach. An address on
+  // this computer (localhost, used by tools/dev-server.mjs while testing) is ignored unless the
+  // tool is being served from that same address, so copies shared with others never offer it.
+  function hostedUrl(u) {
+    if (typeof u !== 'string' || !u.trim()) return null;
+    let url;
+    try { url = new URL(u, location.href); } catch { return null; }
+    const local = /^(localhost|127(\.\d+){3}|0\.0\.0\.0|\[::1\])$/i.test(url.hostname) || /\.localhost$/i.test(url.hostname);
+    return local && url.hostname !== location.hostname ? null : u;
   }
   function normTable(key, t, fail) {
     const columns = {};
