@@ -2269,6 +2269,7 @@
     edit: 'M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4',
     undo: 'M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
     redo: 'M15 14l5-5-5-5 M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
+    close: 'M6 6l12 12 M18 6 6 18',
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg';
@@ -2326,9 +2327,17 @@
             render();
           } }), colOf(k).label);
       })));
-    el.append(h('div', { class: 'ca-tv-bar' },
+    // On narrow screens the filters fold away behind a Filters button (see .ca-filter-set).
+    const nActive = () => Object.values(vs.filters).filter(Boolean).length;
+    const activeText = h('span', { class: 'ca-muted' });
+    const filterId = `ca-filters-${String(key).replace(/\W/g, '-')}`;
+    el.append(h('div', { class: 'ca-tv-bar ca-table-bar' },
       view.search !== false && h('input', { class: 'ca-input', type: 'search', placeholder: 'Search…', value: vs.q, 'aria-label': 'Search', oninput: e => { vs.q = e.target.value; vs.limit = PAGE; refresh(); } }),
-      filters, h('span', { class: 'ca-spacer' }), count, columnsMenu,
+      filters.length > 0 && h('button', { class: 'ca-btn ca-filter-toggle', type: 'button', 'aria-expanded': String(!!vs.filtersOpen), 'aria-controls': filterId,
+        dataset: { caFocus: `filters.${key}` }, onclick: () => { vs.filtersOpen = !vs.filtersOpen; render(); } },
+        'Filters', activeText, h('span', { 'aria-hidden': 'true' }, '▾')),
+      filters.length > 0 && h('div', { class: `ca-filter-set${vs.filtersOpen ? ' open' : ''}`, id: filterId }, filters),
+      h('span', { class: 'ca-spacer' }), count, columnsMenu,
       !ro && view.add !== false && h('button', { class: 'ca-btn primary', onclick: () => openForm(t, null, view.preset) }, `+ Add ${td.singular}`)));
     const thead = h('thead', h('tr', sheetTab >= 0 && h('th', { scope: 'col', class: 'ca-edit-col' }, h('span', { class: 'ca-visually-hidden' }, formRo ? 'View' : 'Edit')), cols.map(c => {
       const active = vs.sort && vs.sort.key === c.key;
@@ -2376,6 +2385,7 @@
           return h('td', { class: 'num' }, formatAs(c.type === 'computed' ? c.format || 'number' : c.type, sum, c));
         })));
       } else tfoot.replaceChildren();
+      activeText.textContent = nActive() ? `(${nActive()} on)` : '';
       count.textContent = rows.length === all.length ? `${all.length} ${all.length === 1 ? td.singular : td.label.toLowerCase()}` : `${rows.length} of ${all.length}`;
       more.replaceChildren(rows.length > vs.limit ? h('button', { class: 'ca-btn', onclick: () => { vs.limit += PAGE; refresh(); } }, `Show more (${rows.length - vs.limit} remaining)`) : '');
     }
@@ -2658,10 +2668,11 @@
     const list = [...S.banners];
     if (S.app.home && !S.isHome && !S.homeBannerDismissed && S.mode !== 'preview') {
       list.unshift({ id: 'home', kind: 'info', content: [
-        `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`,
+        h('span', { class: 'ca-wide-only' }, `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`),
+        h('span', { class: 'ca-narrow-only' }, S.isLocal ? 'Saved copy.' : 'A copy.'),
         h('span', { class: 'ca-spacer' }),
         h('button', { class: 'ca-btn primary', onclick: openInHome }, S.data ? 'Open data in latest tool' : 'Go to latest tool'),
-        h('button', { class: 'ca-btn', onclick: () => { S.homeBannerDismissed = true; render(); } }, 'Dismiss')] });
+        h('button', { class: 'ca-btn ca-banner-close', onclick: () => { S.homeBannerDismissed = true; render(); } }, icon('close'), h('span', { class: 'ca-btn-text' }, 'Dismiss'))] });
     }
     return h('div', { class: 'ca-banners' }, list.map(b => h('div', { class: `ca-banner ${b.kind}`, role: 'status' }, wrap(b.content))));
   }
@@ -4910,7 +4921,7 @@
         h('span', { class: 'ca-spacer' }),
         h('button', { class: 'ca-btn', onclick: () => openForm(t, rec.id) }, ro || td.readOnly ? `View ${td.singular}` : `Edit ${td.singular}`),
         ct && !ro && !ct.readOnly && h('button', { class: 'ca-btn', onclick: () => openForm(ch.table, null, { [ch.link]: rec.id }) }, `+ Add ${ct.singular}`),
-        h('button', { class: 'ca-btn primary', onclick: () => window.print() }, 'Print')),
+        h('button', { class: 'ca-btn primary ca-wide-only', onclick: () => window.print() }, 'Print')),
       h('div', { class: 'ca-card ca-sheet' },
         h('h2', { tabindex: '-1' }, `${view.title || td.singular}: ${displayOf(t, rec)}`),
         (p.projectNumber || p.projectName || rev) && h('p', { class: 'ca-muted' },

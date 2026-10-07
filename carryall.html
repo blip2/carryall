@@ -933,6 +933,9 @@ a { color: var(--ca-link); }
 .ca-tv-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
 .ca-tv-bar .ca-input[type="search"] { width: 16rem; max-width: 100%; }
 .ca-tv-bar .ca-select { max-width: 16rem; }
+.ca-filter-set { display: contents; }
+.ca-filter-toggle { display: none; }
+.ca-filter-toggle .ca-muted, .ca-columns > summary .ca-muted { font-size: 0.875rem; }
 .ca-table-wrap { overflow-x: auto; background: var(--ca-surface); border: 1px solid var(--ca-border); border-radius: var(--ca-radius); }
 .ca-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 .ca-table th, .ca-table td { padding: 0.5rem 0.625rem; border-bottom: 1px solid var(--ca-border); text-align: left; vertical-align: top; }
@@ -953,7 +956,7 @@ a { color: var(--ca-link); }
 .ca-table .ca-empty { text-align: center; color: var(--ca-muted); padding: 1.5rem; }
 .ca-computed { color: var(--ca-muted); }
 .ca-table td.ca-long { min-width: 18rem; }
-.ca-table th.ca-edit-col, .ca-table td.ca-edit-cell { width: 1%; padding: 0 0.125rem; vertical-align: middle; }
+.ca-table th.ca-edit-col, .ca-table td.ca-edit-cell { width: 1%; padding: 0 0.125rem; }
 .ca-table td.ca-quick-cell { padding: 0 0.25rem; }
 .ca-quick {
   display: inline-flex; align-items: center; gap: 0.375rem; min-height: var(--ca-target); padding: 0 0.375rem;
@@ -978,7 +981,6 @@ a { color: var(--ca-link); }
 }
 .ca-columns .ca-menu-list { min-width: 14rem; max-height: min(60vh, 28rem); overflow-y: auto; }
 .ca-columns .ca-check { padding: 0 0.75rem; cursor: pointer; }
-.ca-columns > summary .ca-muted { font-size: 0.875rem; }
 
 /* Status pills: always carry a text label; colour is a tinted fill plus a palette outline. */
 .ca-pill {
@@ -1133,15 +1135,17 @@ body.ca-dragging::after {
 .ca-choice-detail { display: block; color: var(--ca-muted); font-size: 0.875rem; }
 
 @media (max-width: 40rem) {
-  .ca-main { padding: 0.75rem; }
-  .ca-file-name { max-width: 22ch; }
+  /* Narrow screens: as little chrome as possible above the content. */
+  .ca-main { padding: 0.5rem; }
   .ca-header { position: static; }
-  .ca-title { font-size: 1.25rem; }
-  /* Header: title and document line above, then one row of actions. Open and Save as are in More;
-     Undo and Redo keep their names for screen readers but show as icons. */
-  .ca-header-main { padding: 0.5rem 0.75rem; gap: 0.5rem; }
-  .ca-titles { flex-basis: 100%; }
-  .ca-meta { gap: 0 0.75rem; }
+  /* Header: the title and save state on one line, then one row of actions. The document line is
+     under More, Document properties; Open and Save as are in More; Undo and Redo show as icons
+     but keep their names for screen readers. */
+  .ca-header-main { padding: 0.375rem 0.5rem 0.5rem; gap: 0.25rem 0.5rem; }
+  .ca-titles { flex-basis: 100%; flex-direction: row; align-items: baseline; gap: 0.5rem; }
+  .ca-title { font-size: 1.125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .ca-meta { flex: none; font-size: 0.8125rem; }
+  .ca-meta .ca-docline, .ca-meta .ca-file-name { display: none; }
   .ca-file-actions { flex: 1 1 100%; flex-wrap: nowrap; gap: 0.375rem; }
   .ca-file-actions > .ca-btn.primary { flex: 1 1 auto; }
   .ca-file-actions > .ca-menu { margin-left: auto; }
@@ -1153,17 +1157,29 @@ body.ca-dragging::after {
   .ca-menu-list { max-height: min(70vh, 32rem); overflow-y: auto; }
   .ca-wide-only { display: none !important; }
   .ca-narrow-only { display: block !important; }
+  .ca-banner { padding: 0.25rem 0.5rem; gap: 0.25rem 0.5rem; font-size: 0.875rem; }
+  .ca-banner > .ca-spacer { display: none; }
+  .ca-banner > .ca-btn { padding: 0 0.75rem; }
+  .ca-banner > .ca-banner-close { padding: 0; margin-left: auto; }
+  .ca-columns > summary .ca-muted { display: none; }
   .ca-tabs { padding: 0 0.25rem; scroll-padding: 0 1rem; }
   .ca-tab { padding: 0 0.625rem; }
-  .ca-banner { padding: 0.5rem 0.75rem; }
-  .ca-banner > .ca-spacer { display: none; }
-  /* View toolbars: search on its own row, filters two to a row, actions after. */
-  .ca-tv-bar > .ca-input[type="search"] { flex: 1 1 100%; width: auto; }
-  .ca-tv-bar > .ca-select { flex: 1 1 calc(50% - 0.25rem); max-width: none; }
-  .ca-tv-bar > .ca-btn.primary { flex: 1 1 auto; }
+  /* Table toolbar: search and Add on one row, then Filters, Columns and the count. The filters
+     open underneath when Filters is selected. */
+  .ca-tv-bar { gap: 0.375rem; margin-bottom: 0.5rem; }
+  .ca-table-bar > .ca-input[type="search"] { order: 1; flex: 1 1 8rem; width: auto; }
+  .ca-table-bar > .ca-btn.primary { order: 2; }
+  .ca-table-bar > .ca-filter-toggle { order: 3; display: inline-flex; }
+  .ca-table-bar > .ca-columns { order: 4; }
+  .ca-table-bar > .ca-spacer { order: 5; }
+  .ca-table-bar > .ca-count { order: 6; font-size: 0.875rem; }
+  .ca-filter-set { display: none; order: 7; flex: 1 1 100%; }
+  .ca-filter-set.open { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 0.375rem; }
+  .ca-filter-set .ca-select { max-width: none; width: 100%; }
   .ca-tv-bar .ca-sheet-select { flex: 1 1 100%; }
   .ca-sheet-bar > .ca-spacer { display: none; }
   .ca-sheet-bar > .ca-btn { flex: 1 1 auto; }
+  .ca-card { padding: 0.75rem; margin-bottom: 0.75rem; }
 }
 @media print {
   .ca-header .ca-toolbar, .ca-banners, .ca-tabs, .ca-tv-bar, .ca-footer, .ca-skip, .ca-quick-menu { display: none !important; }
@@ -3455,6 +3471,7 @@ body.ca-dragging::after {
     edit: 'M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4',
     undo: 'M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
     redo: 'M15 14l5-5-5-5 M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
+    close: 'M6 6l12 12 M18 6 6 18',
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg';
@@ -3512,9 +3529,17 @@ body.ca-dragging::after {
             render();
           } }), colOf(k).label);
       })));
-    el.append(h('div', { class: 'ca-tv-bar' },
+    // On narrow screens the filters fold away behind a Filters button (see .ca-filter-set).
+    const nActive = () => Object.values(vs.filters).filter(Boolean).length;
+    const activeText = h('span', { class: 'ca-muted' });
+    const filterId = `ca-filters-${String(key).replace(/\W/g, '-')}`;
+    el.append(h('div', { class: 'ca-tv-bar ca-table-bar' },
       view.search !== false && h('input', { class: 'ca-input', type: 'search', placeholder: 'Search…', value: vs.q, 'aria-label': 'Search', oninput: e => { vs.q = e.target.value; vs.limit = PAGE; refresh(); } }),
-      filters, h('span', { class: 'ca-spacer' }), count, columnsMenu,
+      filters.length > 0 && h('button', { class: 'ca-btn ca-filter-toggle', type: 'button', 'aria-expanded': String(!!vs.filtersOpen), 'aria-controls': filterId,
+        dataset: { caFocus: `filters.${key}` }, onclick: () => { vs.filtersOpen = !vs.filtersOpen; render(); } },
+        'Filters', activeText, h('span', { 'aria-hidden': 'true' }, '▾')),
+      filters.length > 0 && h('div', { class: `ca-filter-set${vs.filtersOpen ? ' open' : ''}`, id: filterId }, filters),
+      h('span', { class: 'ca-spacer' }), count, columnsMenu,
       !ro && view.add !== false && h('button', { class: 'ca-btn primary', onclick: () => openForm(t, null, view.preset) }, `+ Add ${td.singular}`)));
     const thead = h('thead', h('tr', sheetTab >= 0 && h('th', { scope: 'col', class: 'ca-edit-col' }, h('span', { class: 'ca-visually-hidden' }, formRo ? 'View' : 'Edit')), cols.map(c => {
       const active = vs.sort && vs.sort.key === c.key;
@@ -3562,6 +3587,7 @@ body.ca-dragging::after {
           return h('td', { class: 'num' }, formatAs(c.type === 'computed' ? c.format || 'number' : c.type, sum, c));
         })));
       } else tfoot.replaceChildren();
+      activeText.textContent = nActive() ? `(${nActive()} on)` : '';
       count.textContent = rows.length === all.length ? `${all.length} ${all.length === 1 ? td.singular : td.label.toLowerCase()}` : `${rows.length} of ${all.length}`;
       more.replaceChildren(rows.length > vs.limit ? h('button', { class: 'ca-btn', onclick: () => { vs.limit += PAGE; refresh(); } }, `Show more (${rows.length - vs.limit} remaining)`) : '');
     }
@@ -3844,10 +3870,11 @@ body.ca-dragging::after {
     const list = [...S.banners];
     if (S.app.home && !S.isHome && !S.homeBannerDismissed && S.mode !== 'preview') {
       list.unshift({ id: 'home', kind: 'info', content: [
-        `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`,
+        h('span', { class: 'ca-wide-only' }, `This is ${S.isLocal ? 'a saved copy' : 'a copy'} of ${S.app.name}. For the latest version of the tool, use the hosted site.`),
+        h('span', { class: 'ca-narrow-only' }, S.isLocal ? 'Saved copy.' : 'A copy.'),
         h('span', { class: 'ca-spacer' }),
         h('button', { class: 'ca-btn primary', onclick: openInHome }, S.data ? 'Open data in latest tool' : 'Go to latest tool'),
-        h('button', { class: 'ca-btn', onclick: () => { S.homeBannerDismissed = true; render(); } }, 'Dismiss')] });
+        h('button', { class: 'ca-btn ca-banner-close', onclick: () => { S.homeBannerDismissed = true; render(); } }, icon('close'), h('span', { class: 'ca-btn-text' }, 'Dismiss'))] });
     }
     return h('div', { class: 'ca-banners' }, list.map(b => h('div', { class: `ca-banner ${b.kind}`, role: 'status' }, wrap(b.content))));
   }
@@ -6096,7 +6123,7 @@ body.ca-dragging::after {
         h('span', { class: 'ca-spacer' }),
         h('button', { class: 'ca-btn', onclick: () => openForm(t, rec.id) }, ro || td.readOnly ? `View ${td.singular}` : `Edit ${td.singular}`),
         ct && !ro && !ct.readOnly && h('button', { class: 'ca-btn', onclick: () => openForm(ch.table, null, { [ch.link]: rec.id }) }, `+ Add ${ct.singular}`),
-        h('button', { class: 'ca-btn primary', onclick: () => window.print() }, 'Print')),
+        h('button', { class: 'ca-btn primary ca-wide-only', onclick: () => window.print() }, 'Print')),
       h('div', { class: 'ca-card ca-sheet' },
         h('h2', { tabindex: '-1' }, `${view.title || td.singular}: ${displayOf(t, rec)}`),
         (p.projectNumber || p.projectName || rev) && h('p', { class: 'ca-muted' },
