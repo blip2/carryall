@@ -41,22 +41,39 @@
  ════════════════════════════════════════════════════════════════
  HOW TO BUILD A NEW TOOL (instructions for people and LLMs)
  ════════════════════════════════════════════════════════════════
+ A tool is defined in one of two ways:
+   * a TOOL DEFINITION: JSON in <script id="ca-spec">, described in the
+     reference below. Every part of it is checked and each problem is
+     explained. Use it whenever the whole tool fits: lists of records,
+     links, formulas, and the built-in views.
+   * a JAVASCRIPT APP: Carryall.app({...}) in <script id="ca-app">, with
+     #ca-spec left null. Use it for complex tools: custom screens (a
+     timeline, calendar or board), calculations that need loops, running
+     totals or text matching, or actions that change many rows at once.
+     Do not force a complex tool into a definition.
+ An assistant that cannot run code (such as Microsoft 365 Copilot) writes
+ definitions only. A coding agent (such as GitHub Copilot in VS Code)
+ chooses: see AGENTS.md in the Carryall repository.
+
+ With a definition:
  1. Open the blank template (carryall.html) in Edge or Chrome. It shows the
     tool builder.
- 2. Write a tool definition: JSON, as described in the reference below.
-    The Carryall Tool Builder agent in Microsoft 365 Copilot writes one
-    from a plain description (see docs/CREATE-A-TOOL-WITH-COPILOT.md).
+ 2. Write the definition, or have an assistant write it from a plain
+    description.
  3. Paste it into the builder and select Check definition. Every problem
     is listed with a fix; Copy problems for Copilot copies them for the
-    agent. Repeat until it says Ready to use (this includes the self-test).
+    assistant. Repeat until it says Ready to use (this includes the
+    self-test).
  4. Preview the tool, then Download it: a finished tool file with no data.
  5. To change a tool, open it and choose More, Change this tool.
  6. Release: increase version, and host the downloaded file as the home copy.
     The home copy is simply the tool file with <script id="ca-data"> null.
 
  An LLM editing a file directly (for example in VS Code) edits only
- <script id="ca-spec"> (and optionally <style id="ca-app-css">), then opens
- the file with ?selftest on the URL to run the self-test.
+ <script id="ca-spec"> or <script id="ca-app"> (and optionally
+ <style id="ca-app-css">), then checks it with tools/check.mjs from the
+ Carryall repository (see AGENTS.md), or opens the file with ?selftest on
+ the URL to run the self-test.
 
  ════════════════════════════════════════════════════════════════
  TOOL DEFINITION REFERENCE
@@ -64,11 +81,13 @@
 {{DEFINITION_REFERENCE}}
 
  ════════════════════════════════════════════════════════════════
- JAVASCRIPT APPS (advanced, for developers)
+ JAVASCRIPT APPS (for complex tools)
  ════════════════════════════════════════════════════════════════
- A developer can define a tool in JavaScript instead, which allows custom
- views written in code. Tools built from JSON are easier to check and to
- change; prefer them. A JavaScript app leaves <script id="ca-spec"> null.
+ A tool that needs more than a definition can express is written in
+ JavaScript instead, which allows custom views and logic in code. Use the
+ built-in view types wherever they fit. A tool that fits a definition
+ should use one: it is fully checked and anyone can change it in the tool
+ builder. A JavaScript app leaves <script id="ca-spec"> null.
  J1. Call Carryall.app({...}) once in <script id="ca-app">, with:
       id             stable kebab-case id. NEVER change it after release:
                      files are matched to tools by this id.
@@ -132,6 +151,8 @@
     Common column options: label, required, default (value or fn(api)),
       help, hidden (never shown), hideInForm, min, max, decimals, unique,
       mono (show in monospace: references, drawing and job numbers).
+    Text columns: suggest: true offers the values already in the column as
+      the user types; suggestFrom: ['table.column', ...] adds other columns.
     Pill colours: grey green amber red blue purple teal pink. Pills always
       show their text, so colour is never the only signal. For computed
       columns colors may be a function (value, row) => colour.
@@ -145,7 +166,12 @@
       { type: 'table', table, title?, columns?: [keys], sort?: {key, dir},
         totals?: [keys], filters?: [keys] (computed columns allowed),
         where?: (row, api) => bool,
-        add?: false, readOnly?: true, preset?: {defaults for new rows} }
+        add?: false, readOnly?: true, preset?: {defaults for new rows},
+        hiddenColumns?: [keys] (start hidden; a Columns button shows them),
+        quickEdit?: [choice keys] (changed from the table, saved like the
+          form: validate, onSave and undo all apply),
+        open?: 'title of a sheet view of the same table' (a row opens it;
+          an edit button starts each row) }
       { type: 'summary', table, groupBy, bucket?: 'month'|'year' (dates),
         metrics?: [{ label, op: 'count'|'sum'|'avg'|'min'|'max', column, format? }],
         chart?: false | metricIndex, showTable?: false, where?, sortBy?: 'label' }
@@ -155,7 +181,8 @@
           kpi blocks and blocks with wide: true span the full width
       { type: 'settings', title, fields?: [keys], intro? }
       { type: 'sheet', title, table, fields?, sort?, where?,
-        child?: { table, link (ref column), columns?, sort?, where? } }
+        child?: { table, link (ref column), columns?, sort?, where? },
+        picker?: false (a Back button instead of the record list) }
       { type: 'matrix', title, table, rows: column key or fn(row, api),
         columns: same, metrics?: [{ label, op, column, where? }], where? }
       { type: 'custom', title, render: (el, api) => { el.append(...) } }

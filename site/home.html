@@ -2,24 +2,35 @@
 <p class="lead">Carryall tools are single HTML files that hold structured data, a viewer and an editor.
   Open a tool, add your data and download a copy. The copy works on its own, anywhere, with no server.</p>
 
-<h2 id="build">Build your own tool, without code</h2>
-<p>Describe the tool to Microsoft 365 Copilot. It writes a tool definition, and the tool builder checks it,
-  explains any problems in words Copilot can fix, lets you try the tool and downloads it.</p>
+<h2 id="build">Build your own tool</h2>
+<p>A tool is defined by a short JSON tool definition (tables, columns, spreadsheet-like formulas and views),
+  or for complex tools by a JavaScript app. Carryall checks every part of a definition and explains each
+  problem in plain words, so an AI assistant can write it and fix it.</p>
 <ol class="steps">
-  <li><strong>Describe it</strong>Tell the Carryall Tool Builder agent in Copilot what you want to keep track of and calculate.</li>
-  <li><strong>Check it</strong>Paste Copilot's definition into the tool builder. Copy any problems back to Copilot until it says Ready to use.</li>
+  <li><strong>Describe it</strong>Tell an assistant what you want to keep track of and calculate.</li>
+  <li><strong>Check it</strong>The checker lists any problems for the assistant to fix, until the tool passes its self-test.</li>
   <li><strong>Try it</strong>Preview the tool: add and edit rows and check the numbers.</li>
-  <li><strong>Download it</strong>Your finished tool is one HTML file. Share it, or have it hosted.</li>
+  <li><strong>Share it</strong>Your finished tool is one HTML file. Share it, or have it hosted.</li>
 </ol>
-<div class="actions">
-  <a class="btn primary" href="carryall.html">Open the tool builder</a>
-  <a class="btn" href="guide.html">Read the guide</a>
-  <a class="btn" href="agent.html">Set up the Copilot agent</a>
-  <a class="btn" href="carryall.html" download>Download the blank template</a>
+<div class="cards">
+  <section class="card" aria-labelledby="route-gh">
+    <h3 id="route-gh">With GitHub Copilot in VS Code</h3>
+    <p>Copilot's agent edits the tool file, runs the checker and fixes problems itself. It writes a tool
+      definition for simpler tools and a JavaScript app for complex ones.</p>
+    <div class="actions"><a class="btn primary" href="github-copilot.html">Build with GitHub Copilot</a></div>
+  </section>
+  <section class="card" aria-labelledby="route-builder">
+    <h3 id="route-builder">In the browser, with the tool builder</h3>
+    <p>Paste a definition from a chat assistant such as Microsoft 365 Copilot into the tool builder. It checks,
+      previews and downloads the tool. No install needed.</p>
+    <div class="actions">
+      <a class="btn primary" href="carryall.html">Open the tool builder</a>
+      <a class="btn" href="guide.html">Read the guide</a>
+    </div>
+  </section>
 </div>
-
-<p class="muted">Comfortable with VS Code and Git? <a href="github-copilot.html">Build with GitHub Copilot</a>:
-  its agent edits the tool, runs the checker and fixes problems itself.</p>
+<p class="muted"><a href="reference.html">The definition reference</a> lists everything a definition can contain.
+  <a href="carryall.html" download>Download the blank template</a> to build tools offline.</p>
 
 <h2 id="examples">Example tools</h2>
 <div class="cards">

@@ -36,7 +36,7 @@ function copy(from, to, { rewrite = true } = {}) {
 
 // ── Pages ────────────────────────────────────────────────────────────────
 const template = read('site/template.html');
-const NAV = [['index.html', 'Home'], ['guide.html', 'Build a tool'], ['reference.html', 'Definition reference'], ['agent.html', 'Copilot agent'], ['github-copilot.html', 'GitHub Copilot'], ['carryall.html', 'Tool builder']];
+const NAV = [['index.html', 'Home'], ['github-copilot.html', 'GitHub Copilot'], ['guide.html', 'Microsoft 365 Copilot'], ['reference.html', 'Definition reference'], ['carryall.html', 'Tool builder']];
 function page(file, { title, description, main }) {
   const nav = NAV.map(([href, label]) => `<li><a href="${href}"${href === file ? ' aria-current="page"' : ''}>${label}</a></li>`).join('');
   const html = template.replace('{{title}}', () => esc(title)).replace('{{description}}', () => esc(description))
@@ -78,7 +78,7 @@ function mdPage(file, from, description) {
 
 page('index.html', {
   title: 'Carryall: single-file tools that carry their own data',
-  description: 'Build tracker and calculator tools without code: describe them to Copilot, check them in the tool builder, and share one HTML file.',
+  description: 'Build tracker and calculator tools with an AI assistant: as a checked tool definition or, for complex tools, a JavaScript app. Share one HTML file.',
   main: read('site/home.html'),
 });
 mdPage('guide.html', 'docs/CREATE-A-TOOL-WITH-COPILOT.md', 'How to build a Carryall tool with Microsoft 365 Copilot and the tool builder, and how to set up the Copilot agent.');
@@ -88,9 +88,9 @@ mdPage('reference.html', 'src/definition-reference.md', 'Everything a Carryall t
 const instructions = read('docs/copilot/agent-instructions.md').trimEnd();
 const knowledgeKb = Math.round(statSync(join(root, 'docs/copilot/carryall-reference.md')).size / 1024);
 page('agent.html', {
-  title: 'Set up the Copilot agent | Carryall',
+  title: 'Set up the Microsoft 365 Copilot agent | Carryall',
   description: 'The instructions and knowledge file for the Carryall Tool Builder agent in Microsoft 365 Copilot.',
-  main: `<h1>Set up the Copilot agent</h1>
+  main: `<h1>Set up the Microsoft 365 Copilot agent</h1>
 <p class="lead">The Carryall Tool Builder agent writes tool definitions from a plain-English description.
   Set it up once in Microsoft 365 Copilot with Agent Builder (or Copilot Studio), then share it with the people who build tools.</p>
 <div class="table-wrap"><table><thead><tr><th scope="col">Setting</th><th scope="col">Value</th></tr></thead><tbody>
