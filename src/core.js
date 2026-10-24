@@ -2221,8 +2221,8 @@
     }
     return out;
   }
-  // options: showErrors (check the preset values at once), copyOf (the row a new one duplicates).
-  function openForm(t, id, preset = {}, { showErrors: checkNow = false, copyOf = null } = {}) {
+  // options: showErrors (check the preset values at once), copy (a new row that duplicates another).
+  function openForm(t, id, preset = {}, { showErrors: checkNow = false, copy = false } = {}) {
     const td = S.app.tables[t];
     const existing = id ? tableRows(t).find(r => r.id === id) : null;
     const draft = existing ? { ...clone(existing), ...preset, id: existing.id } : { id: null, ...defaultsFor(td), ...preset };
@@ -2253,15 +2253,13 @@
     }));
     const formErr = h('div', { class: 'ca-error', role: 'alert' });
     body.append(formErr);
-    if (copyOf) body.prepend(h('p', { class: 'ca-help ca-form-note' }, `A copy of ${copyOf}. Change what differs, then add it.`));
     refresh();
     const buttons = [];
     const unchanged = () => Object.values(td.columns).every(c => c.type === 'computed' || sameVal(existing[c.key], draft[c.key]));
     if (existing && !ro && td.duplicate !== false) buttons.push({ label: 'Duplicate', left: true, onClick: async () => {
       if (!unchanged() && !(await confirmDialog(`Discard your changes to this ${td.singular}?`, `The copy is made from the ${td.singular} as it was last saved, so the changes you made here are lost.`, 'Discard and duplicate', true))) return false;
-      const name = displayOf(t, existing) || `this ${td.singular}`;
       // Open the copy once this form has closed, so it is never opened on top of it.
-      setTimeout(() => openForm(t, null, copyValues(t, existing), { copyOf: name }));
+      setTimeout(() => openForm(t, null, copyValues(t, existing), { copy: true }));
       return true;
     } });
     if (existing && !ro) buttons.push({ label: 'Delete', danger: true, left: true, onClick: async () => {
@@ -2289,7 +2287,7 @@
       return true;
     } });
     if (checkNow && !ro) setTimeout(check);
-    return dialog({ title: copyOf ? `Duplicate ${td.singular}` : `${existing ? (ro ? 'View' : 'Edit') : 'New'} ${td.singular}`, body, buttons });
+    return dialog({ title: copy ? `Duplicate ${td.singular}` : `${existing ? (ro ? 'View' : 'Edit') : 'New'} ${td.singular}`, body, buttons });
   }
   function defaultsFor(td) {
     const out = {};
