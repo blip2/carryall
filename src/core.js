@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const CORE_VERSION = '0.5.0';
+  const CORE_VERSION = '0.6.0';
   const FORMAT = 'carryall/1';
   const PAGE = 500;                 // rows rendered before "show more"
   const SOFT_ROWS = 5000;           // size advisory thresholds
@@ -694,7 +694,7 @@
       count: (t, where) => tableRows(t).filter(where || (() => true)).length,
       insert: insertRow, update: updateRow, remove: removeRow,
       setSettings: patch => mutate(d => Object.assign(d.settings, patch)),
-      openForm,
+      openForm, copyValues,
       toast, h, ui: UI, util: Util,
       rerender: render,
     });
@@ -2204,7 +2204,25 @@
   }
   // preset: values for a new row, or changes already made to an existing one (shown checked when
   // showErrors is set, as when a quick edit from a table breaks one of the table's checks).
-  function openForm(t, id, preset = {}, { showErrors: checkNow = false } = {}) {
+  // The values a duplicate of a row starts with. Stored values are copied, except columns that
+  // must differ: unique ones, ones with a calculated default (such as NEXTREF or TODAY()) and
+  // ones marked duplicate: false, which start as a new row's would. Linked rows are not copied.
+  function copyValues(t, rowOrId) {
+    const td = S.app.tables[t];
+    const row = typeof rowOrId === 'string' ? rowById(t, rowOrId) : rowOrId;
+    if (!td || !row) return {};
+    const fresh = defaultsFor(td);
+    const out = {};
+    for (const c of Object.values(td.columns)) {
+      if (c.type === 'computed') continue;
+      const renew = c.unique || c.duplicate === false || typeof c.default === 'function';
+      const v = renew ? fresh[c.key] : clone(row[c.key]);
+      if (v !== undefined) out[c.key] = v;
+    }
+    return out;
+  }
+  // options: showErrors (check the preset values at once), copy (a new row that duplicates another).
+  function openForm(t, id, preset = {}, { showErrors: checkNow = false, copy = false } = {}) {
     const td = S.app.tables[t];
     const existing = id ? tableRows(t).find(r => r.id === id) : null;
     const draft = existing ? { ...clone(existing), ...preset, id: existing.id } : { id: null, ...defaultsFor(td), ...preset };
@@ -2237,6 +2255,13 @@
     body.append(formErr);
     refresh();
     const buttons = [];
+    const unchanged = () => Object.values(td.columns).every(c => c.type === 'computed' || sameVal(existing[c.key], draft[c.key]));
+    if (existing && !ro && td.duplicate !== false) buttons.push({ label: 'Duplicate', left: true, onClick: async () => {
+      if (!unchanged() && !(await confirmDialog(`Discard your changes to this ${td.singular}?`, `The copy is made from the ${td.singular} as it was last saved, so the changes you made here are lost.`, 'Discard and duplicate', true))) return false;
+      // Open the copy once this form has closed, so it is never opened on top of it.
+      setTimeout(() => openForm(t, null, copyValues(t, existing), { copy: true }));
+      return true;
+    } });
     if (existing && !ro) buttons.push({ label: 'Delete', danger: true, left: true, onClick: async () => {
       const refs = referencesTo(t, id);
       if (refs.n) { await alertDialog(`Can't delete this ${td.singular}`, `It is still used (${refs.where.join(', ')}). Change those first.`); return false; }
@@ -2262,7 +2287,7 @@
       return true;
     } });
     if (checkNow && !ro) setTimeout(check);
-    return dialog({ title: `${existing ? (ro ? 'View' : 'Edit') : 'New'} ${td.singular}`, body, buttons });
+    return dialog({ title: copy ? `Duplicate ${td.singular}` : `${existing ? (ro ? 'View' : 'Edit') : 'New'} ${td.singular}`, body, buttons });
   }
   function defaultsFor(td) {
     const out = {};
@@ -3153,6 +3178,17 @@
             const sbad = conds.map(([tk, c]) => showIfError(tk, d.tables[tk] || [], c)).filter(Boolean);
             ok(`fixture "${fx.name}": showIf works for every row`, !sbad.length, sbad.join('; '));
           }
+          // A duplicate copies stored values only, and never repeats a unique value.
+          for (const [tk, td] of Object.entries(app.tables)) {
+            const r = d.tables[tk]?.[0];
+            if (!r || td.duplicate === false || td.readOnly) continue;
+            const copy = copyValues(tk, r);
+            const cols = Object.values(td.columns);
+            const bad = 'id' in copy ? 'the id was copied'
+              : cols.find(c => c.type === 'computed' && c.key in copy)?.key ? 'a calculated column was copied'
+              : cols.filter(c => c.unique && !fxBlank(copy[c.key]) && sameVal(copy[c.key], r[c.key])).map(c => `unique column ${c.key} was copied`).join(', ');
+            ok(`fixture "${fx.name}": duplicating a ${td.singular} copies the right values`, !bad, bad);
+          }
           if (fx.expect) {
             const out = fx.expect(d, makeApi());
             ok(`fixture "${fx.name}" expectations`, out !== false && typeof out !== 'string', typeof out === 'string' ? out : '');
@@ -4032,8 +4068,8 @@
   };
   const TOP_KEYS = ['id', 'name', 'description', 'version', 'schemaVersion', 'locale', 'currency', 'home', 'versionUrl', 'identity',
     'fileName', 'saveInPlace', 'properties', 'settings', 'tables', 'views', 'seed', 'migrations', 'tests'];
-  const TABLE_KEYS = ['id', 'label', 'singular', 'description', 'display', 'displayFormula', 'columns', 'checks', 'onSave', 'readOnly'];
-  const COL_COMMON = ['id', 'label', 'type', 'required', 'unique', 'help', 'hidden', 'hideInForm', 'mono', 'default', 'defaultFormula', 'showIf', 'control'];
+  const TABLE_KEYS = ['id', 'label', 'singular', 'description', 'display', 'displayFormula', 'columns', 'checks', 'onSave', 'readOnly', 'duplicate'];
+  const COL_COMMON = ['id', 'label', 'type', 'required', 'unique', 'help', 'hidden', 'hideInForm', 'mono', 'default', 'defaultFormula', 'showIf', 'control', 'duplicate'];
   const COL_BY_TYPE = {
     text: ['maxLength', 'suggest', 'suggestFrom'], longtext: [], number: ['min', 'max', 'decimals', 'step'], currency: ['min', 'max', 'currency', 'step'],
     percent: ['min', 'max', 'decimals', 'step'], date: [], boolean: ['checkLabel'], choice: ['options', 'colors'],
@@ -4278,7 +4314,7 @@
           else { const hint = KEY_HINTS[k], best = closest(k, allowed); err(where, `Unknown property "${k}".${hint ? ' ' + hint : best ? ` Did you mean "${best}"?` : ''}`); }
         }
         for (const k of ['label', 'help']) if (c[k] != null && typeof c[k] !== 'string') err(where, `"${k}" must be text.`);
-        for (const k of ['required', 'unique', 'hidden', 'hideInForm', 'mono', 'suggest']) if (c[k] != null && typeof c[k] !== 'boolean') err(where, `"${k}" must be true or false, without quotes.`);
+        for (const k of ['required', 'unique', 'hidden', 'hideInForm', 'mono', 'suggest', 'duplicate']) if (c[k] != null && typeof c[k] !== 'boolean') err(where, `"${k}" must be true or false, without quotes.`);
         if (c.type === 'text' && (c.suggest != null || c.suggestFrom != null)) {
           if (kind === 'settings') err(where, 'Suggestions come from the rows of a table, so "suggest" and "suggestFrom" only work on table columns.');
           else if (c.suggestFrom != null) {
@@ -4316,7 +4352,7 @@
         if (c.type === 'computed') {
           if (c.formula == null) err(where, 'Add a "formula", for example "quantity * rate".');
           if (c.format != null && !FORMATS.includes(c.format)) err(where, `Unknown format "${c.format}". Use one of ${FORMATS.join(', ')}.`);
-          if (c.required || c.unique || c.default !== undefined || c.defaultFormula) warn(where, 'Calculated columns are never typed in, so required, unique and default are ignored.');
+          if (c.required || c.unique || c.default !== undefined || c.defaultFormula || c.duplicate != null) warn(where, 'Calculated columns are never typed in, so required, unique, default and duplicate are ignored.');
         }
         if (c.type === 'ref') refChecks.push([c, where]);
         if (c.default !== undefined && c.default !== null && c.type !== 'computed') {
@@ -4363,6 +4399,7 @@
           err(where, `Table id "${t.id}" can only use letters, numbers and _, starting with a letter. Use "${tid}" here and everywhere this table is named.`);
         } else if (FX_RESERVED.includes(t.id.toLowerCase())) { err(where, `"${t.id}" is a reserved word. Choose another table id.`); return; }
         if (sch.tables[tid]) { err(where, `The table "${tid}" is defined twice.`); return; }
+        if (t.duplicate != null && typeof t.duplicate !== 'boolean') err(where, '"duplicate" must be true or false, without quotes. false removes the Duplicate button from the form.');
         if (!t.singular) warn(where, `Add "singular", the name for one row, for example "${String(t.label || t.id).replace(/s$/i, '').toLowerCase()}". Buttons use it, such as "Add ${String(t.label || t.id).replace(/s$/i, '').toLowerCase()}".`);
         const td = sch.tables[tid] = { cols: {}, label: t.label || tid, id: tid };
         if (!Array.isArray(t.columns) || !t.columns.length) { err(where, 'Add "columns": a list with at least one column.'); return; }
@@ -4798,7 +4835,7 @@
     for (const t of spec.tables) {
       const tk = t.id;
       const td = { columns: {} };
-      for (const k of ['label', 'singular', 'readOnly', 'display']) if (t[k] !== undefined) td[k] = t[k];
+      for (const k of ['label', 'singular', 'readOnly', 'display', 'duplicate']) if (t[k] !== undefined) td[k] = t[k];
       for (const c of t.columns) td.columns[c.id] = colOut(c, tk);
       if (t.displayFormula) {
         const ast = fx(t.displayFormula, { table: tk, thisTable: tk });
