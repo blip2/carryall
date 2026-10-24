@@ -153,6 +153,14 @@
       mono (show in monospace: references, drawing and job numbers).
     Text columns: suggest: true offers the values already in the column as
       the user types; suggestFrom: ['table.column', ...] adds other columns.
+      Typing filters by text anywhere in a value; a button (or Alt+Down)
+      shows the whole list.
+    showIf: (row, api) => boolean shows a field only when it applies, for
+      rows of different kinds. A field that does not apply is hidden in the
+      form and sheets, blank in tables, not editable inline, not required
+      and not range-checked. Its value is kept (onSave may clear it).
+    Choice columns with two to four options: control: 'toggle' shows them as
+      a row of buttons instead of a drop-down.
     Pill colours: grey green amber red blue purple teal pink. Pills always
       show their text, so colour is never the only signal. For computed
       columns colors may be a function (value, row) => colour.
@@ -170,11 +178,16 @@
         hiddenColumns?: [keys] (start hidden; a Columns button shows them),
         quickEdit?: [choice keys] (changed from the table, saved like the
           form: validate, onSave and undo all apply),
+        inlineEdit?: [keys] (text, number, currency, percent, date, boolean,
+          choice and ref columns edited in their cells: Enter, Tab or moving
+          away saves like the form, Escape cancels, a failed check keeps the
+          cell open with its message; one undo step per change),
         open?: 'title of a sheet view of the same table' (a row opens it;
           an edit button starts each row) }
       { type: 'summary', table, groupBy, bucket?: 'month'|'year' (dates),
         metrics?: [{ label, op: 'count'|'sum'|'avg'|'min'|'max', column, format? }],
-        chart?: false | metricIndex, showTable?: false, where?, sortBy?: 'label' }
+        chart?: false | metricIndex | 'pie' (first metric; the table is its
+          legend), showTable?: false, where?, sortBy?: 'label' }
       { type: 'kpi', items: [{ label, value: api => number, format }] }
           format: number | integer | currency | percent | text | date
       { type: 'dashboard', title, blocks: [ ...kpi/summary/table/custom ] }
@@ -192,6 +205,9 @@
       api.insert(t, row) / api.update(t, id, patch) / api.remove(t, id),
       api.setSettings(patch), api.openForm(t, id?), api.format(t, row, key),
       api.formatAs(type, value), api.ui.barChart([{label, value}], {format}),
+      api.ui.pieChart([{label, value}], {format, title}) (an SVG; slice i
+        is api.ui.palette[i], so show a legend: a table with
+        api.ui.swatch(api.ui.palette[i]) beside each name),
       api.ui.kpi(label, text), api.ui.card(title, ...nodes), api.ui.pill,
       api.ui.dialog / alert / confirm, api.toast(msg).
     NEVER mutate api.doc directly: use insert/update/remove/setSettings so

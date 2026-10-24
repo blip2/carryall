@@ -111,8 +111,8 @@ columns (see below), except that settings cannot be `ref` or `computed`. Formula
 
 Keys every column can have: `id`, `label`, `type`, `required` (true or false), `unique`, `help`
 (guidance shown under the field), `hidden` (never shown), `hideInForm`, `mono` (monospace, for
-references and drawing numbers), `default` (a fixed value) and `defaultFormula` (a formula such
-as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`).
+references and drawing numbers), `default` (a fixed value), `defaultFormula` (a formula such
+as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`) and `showIf` (see below).
 
 | Type | Stores | Extra keys |
 |:-|:-|:-|
@@ -123,7 +123,7 @@ as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`).
 | `percent` | A percentage stored as 15 for 15% | `min`, `max`, `decimals` |
 | `date` | A date written `"YYYY-MM-DD"` | |
 | `boolean` | `true` or `false`, shown as a tick box | `checkLabel` |
-| `choice` | One of a fixed list | `options` (required), `colors` |
+| `choice` | One of a fixed list | `options` (required), `colors`, `control` |
 | `ref` | A link to a row in another table (it stores that row's id) | `table` (required), `display` |
 | `computed` | Nothing: it is calculated every time | `formula` (required), `format`, `decimals`, `colors`, `colorFormula` |
 
@@ -143,13 +143,30 @@ as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`).
   "suggestFrom": ["comments.raisedByOrg", "responses.organisation"] }
 ```
 
+  Typing filters the list by the text anywhere in each value. A button beside the field (or
+  Alt+Down) shows the whole list whatever is typed, and a clear button empties the field.
+- `"control": "toggle"` on a choice column with two to four options shows them as a row of buttons
+  instead of a drop-down, so every option is visible and one click chooses. A column that is not
+  required gets a "Not set" button too.
+- `showIf` is a formula about the row, true when the field applies. Use it when rows come in kinds
+  that need different fields. A field that does not apply is hidden in the form and on sheets, blank
+  in tables, not required, and its `min` and `max` are not checked. Its value is kept, so switching
+  back restores it. Calculated columns and settings cannot have `showIf`; in a formula that uses a
+  field that may not apply, test the kind first, as in `IF(kind = 'Discrete', unitKw * quantity, ...)`.
+
+```text
+{ "id": "kind", "label": "Kind", "type": "choice", "options": ["Discrete", "Area based"], "control": "toggle", "required": true, "default": "Discrete" },
+{ "id": "unitKw", "label": "Unit kW", "type": "number", "required": true, "showIf": "kind = 'Discrete'" },
+{ "id": "area", "label": "Area (m²)", "type": "number", "required": true, "showIf": "kind = 'Area based'" }
+```
+
 ## Formulas
 
 Formulas are like spreadsheet formulas, written without the `=`.
 
 | Where | The formula can use |
 |:-|:-|
-| `formula`, `colorFormula`, `displayFormula` of a table's column | That row's columns, linked rows, settings, table totals |
+| `formula`, `colorFormula`, `displayFormula`, `showIf` of a table's column | That row's columns, linked rows, settings, table totals |
 | `where` of a table, summary, sheet or matrix view | The row being tested |
 | `checks[].errorIf` | The row being saved |
 | `onSave[].when` and `onSave[].formula` | The row being saved, and `before.column` for its value before the edit |
@@ -255,6 +272,13 @@ rows, such as `{ "status": "Open" }`), and:
 - `quickEdit`: choice columns that can be changed straight from the table, such as `["status"]`.
   Selecting the value opens a short list of the options; choosing one saves the row as the form
   would, so checks, onSave rules and undo all apply. If a check fails, the form opens to show why.
+- `inlineEdit`: columns whose values can be changed in their cells, such as `["diversity", "quantity"]`.
+  Text, number, currency, percent, date, boolean, choice and link columns can be listed, but not
+  calculated ones. Selecting a cell (or Enter) turns it into a field; Enter, Tab or moving away saves
+  the row as the form would, so checks, onSave rules and undo all apply. Escape puts the old value
+  back. If a check fails, the cell stays open with the message. Tab moves to the next editable cell
+  in the row, and Up and Down move between rows. After a change the row keeps its place until the
+  table is sorted again. Use it for tables where many rows need the same kind of change.
 - `hiddenColumns`: columns that start hidden. A Columns button lets people show them (and hide
   others). The choice is kept until the browser tab is closed. List them in `columns` too to set
   where they appear; otherwise they go at the end.
@@ -275,7 +299,9 @@ rows, such as `{ "status": "Open" }`), and:
 ```
 
 `op` is count, sum, avg, min or max. `bucket: "month"` or `"year"` groups a date column. `chart: false`
-hides the chart, or `chart: 1` charts the second metric. `showTable: false` hides the table.
+hides the chart, or `chart: 1` charts the second metric. `chart: "pie"` draws a pie chart of the first
+metric instead of bars, with a colour square beside each group in the table as its legend (so the
+table always shows). `showTable: false` hides the table.
 `sortBy: "label"` sorts groups by name.
 
 **kpi**: headline figures. Each `formula` is a table total or other document-level formula.
