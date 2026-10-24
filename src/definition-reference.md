@@ -101,6 +101,7 @@ columns (see below), except that settings cannot be `ref` or `computed`. Formula
 | `checks` | Validation rules (see Checks). |
 | `onSave` | Values filled in automatically when a row is saved (see onSave rules). |
 | `readOnly` | `true` stops rows being added or edited in the tool. |
+| `duplicate` | `false` removes the Duplicate button from the form (see Duplicating a row). |
 
 ## Columns
 
@@ -112,7 +113,8 @@ columns (see below), except that settings cannot be `ref` or `computed`. Formula
 Keys every column can have: `id`, `label`, `type`, `required` (true or false), `unique`, `help`
 (guidance shown under the field), `hidden` (never shown), `hideInForm`, `mono` (monospace, for
 references and drawing numbers), `default` (a fixed value), `defaultFormula` (a formula such
-as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`) and `showIf` (see below).
+as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`), `showIf` (see below) and `duplicate` (see
+Duplicating a row).
 
 | Type | Stores | Extra keys |
 |:-|:-|:-|
@@ -158,6 +160,24 @@ as `"TODAY()"` or `"NEXTREF(snags.ref, 'SN-001')"`) and `showIf` (see below).
 { "id": "kind", "label": "Kind", "type": "choice", "options": ["Discrete", "Area based"], "control": "toggle", "required": true, "default": "Discrete" },
 { "id": "unitKw", "label": "Unit kW", "type": "number", "required": true, "showIf": "kind = 'Discrete'" },
 { "id": "area", "label": "Area (m²)", "type": "number", "required": true, "showIf": "kind = 'Area based'" }
+```
+
+### Duplicating a row
+
+The form for an existing row has a **Duplicate** button. It opens a new row filled in from that row,
+so the person changes what differs and adds it; nothing is saved until then, and the usual checks and
+onSave rules apply. Every stored value is copied except:
+
+- `unique` columns, and columns with a `defaultFormula` (such as `NEXTREF` or `TODAY()`), which start
+  as a new row's would: the copy gets the next reference and today's date;
+- columns with `"duplicate": false`, which also start as a new row's would. Use it for values that
+  belong to the original only, such as a response, a status or a closing date.
+
+Rows linked to the original (its child rows) are not copied. `"duplicate": false` on a table removes
+the button.
+
+```json
+{ "id": "response", "label": "Design team response", "type": "longtext", "duplicate": false }
 ```
 
 ## Formulas

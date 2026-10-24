@@ -302,6 +302,7 @@ a { color: var(--ca-link); }
 .ca-error:empty { display: none; }
 .ca-field.invalid .ca-input, .ca-field.invalid .ca-select, .ca-field.invalid .ca-textarea { border: 2px solid var(--ca-danger); }
 .ca-readonly { padding: 0.375rem 0; color: var(--ca-muted); }
+.ca-form .ca-form-note { margin: 0; }
 .ca-check { display: flex; align-items: center; gap: 0.5rem; font-weight: 400 !important; min-height: var(--ca-target); }
 .ca-check input { width: 1.25rem; height: 1.25rem; accent-color: var(--ca-accent); }
 /* Toggle: radio inputs in a fieldset, drawn as joined buttons. The chosen one is filled, bold

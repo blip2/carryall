@@ -161,6 +161,13 @@
       and not range-checked. Its value is kept (onSave may clear it).
     Choice columns with two to four options: control: 'toggle' shows them as
       a row of buttons instead of a drop-down.
+    Duplicate: the form of an existing row has a Duplicate button that opens
+      a new row filled in from it (nothing is saved until it is added).
+      Values are copied except unique columns, columns whose default is a
+      function, and columns with duplicate: false, which start as a new
+      row's would. duplicate: false on a table removes the button.
+      api.copyValues(t, id) gives those values, for example to add a copy
+      directly: api.insert(t, api.copyValues(t, id)).
     Pill colours: grey green amber red blue purple teal pink. Pills always
       show their text, so colour is never the only signal. For computed
       columns colors may be a function (value, row) => colour.
@@ -203,7 +210,8 @@
       XSS-safe (children become text). NEVER use innerHTML with data.
     Useful api members in views: api.doc, api.settings, api.rows(t),
       api.insert(t, row) / api.update(t, id, patch) / api.remove(t, id),
-      api.setSettings(patch), api.openForm(t, id?), api.format(t, row, key),
+      api.setSettings(patch), api.openForm(t, id?, preset?), api.copyValues(t, id),
+      api.format(t, row, key),
       api.formatAs(type, value), api.ui.barChart([{label, value}], {format}),
       api.ui.pieChart([{label, value}], {format, title}) (an SVG; slice i
         is api.ui.palette[i], so show a legend: a table with
