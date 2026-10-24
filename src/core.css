@@ -247,6 +247,21 @@ a { color: var(--ca-link); }
   content: ""; position: absolute; left: 0.875rem; top: 50%; width: 0.375rem; height: 0.75rem;
   border: solid var(--ca-text); border-width: 0 2px 2px 0; transform: translateY(-65%) rotate(45deg);
 }
+/* Inline edit: each editable cell is a button showing its value, with a dotted underline so it
+   reads as editable without relying on colour. */
+.ca-table td.ca-inline-cell { padding: 0 0.25rem; }
+.ca-inline {
+  display: flex; align-items: center; width: 100%; min-height: var(--ca-target); min-width: var(--ca-target); padding: 0 0.375rem;
+  border: 1px solid transparent; border-bottom: 1px dotted var(--ca-border-strong); border-radius: var(--ca-radius);
+  background: none; cursor: pointer; text-align: inherit;
+}
+.ca-inline-cell.num .ca-inline { justify-content: flex-end; }
+.ca-inline:hover { border-color: var(--ca-border-strong); background: var(--ca-surface); }
+.ca-inline-edit { padding: 0.25rem 0; min-width: 9rem; }
+.ca-inline-edit > .ca-input, .ca-inline-edit > .ca-select, .ca-inline-edit .ca-combo { width: 100%; }
+.ca-inline-cell.num .ca-inline-edit .ca-input { text-align: right; }
+.ca-inline-cell.invalid .ca-input, .ca-inline-cell.invalid .ca-select, .ca-inline-cell.invalid .ca-toggle-opts { border: 2px solid var(--ca-danger); }
+.ca-inline-edit .ca-check { min-height: var(--ca-target); }
 .ca-columns .ca-menu-list { min-width: 14rem; max-height: min(60vh, 28rem); overflow-y: auto; }
 .ca-columns .ca-check { padding: 0 0.75rem; cursor: pointer; }
 
@@ -289,6 +304,67 @@ a { color: var(--ca-link); }
 .ca-readonly { padding: 0.375rem 0; color: var(--ca-muted); }
 .ca-check { display: flex; align-items: center; gap: 0.5rem; font-weight: 400 !important; min-height: var(--ca-target); }
 .ca-check input { width: 1.25rem; height: 1.25rem; accent-color: var(--ca-accent); }
+/* Toggle: radio inputs in a fieldset, drawn as joined buttons. The chosen one is filled, bold
+   and ticked, so it never depends on colour alone. */
+.ca-toggle { border: 0; margin: 0; padding: 0; min-width: 0; }
+.ca-toggle > legend { padding: 0; }
+.ca-toggle-opts { display: inline-flex; flex-wrap: wrap; max-width: 100%; border-radius: var(--ca-radius); }
+.ca-field .ca-toggle-opt, .ca-toggle-opt { position: relative; display: inline-flex; margin: 0; font-weight: 400; font-size: 1rem; }
+.ca-toggle-opt input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.ca-toggle-opt span {
+  display: inline-flex; align-items: center; gap: 0.375rem; min-height: var(--ca-target); padding: 0 0.875rem;
+  border: 1px solid var(--ca-border-strong); margin-left: -1px; background: var(--ca-surface); white-space: nowrap;
+}
+.ca-toggle-opt:first-child span { margin-left: 0; border-radius: var(--ca-radius) 0 0 var(--ca-radius); }
+.ca-toggle-opt:last-child span { border-radius: 0 var(--ca-radius) var(--ca-radius) 0; }
+.ca-toggle-opt:only-child span { border-radius: var(--ca-radius); }
+.ca-toggle-opt:hover input:not(:checked) + span { background: var(--ca-surface-2); }
+.ca-toggle-opt input:checked + span { background: var(--ca-text); color: var(--ca-surface); border-color: var(--ca-text); font-weight: 700; position: relative; z-index: 1; }
+.ca-toggle-opt input:checked + span::before {
+  content: ""; width: 0.3125rem; height: 0.625rem; margin: 0 0.125rem 0.1875rem 0;
+  border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.ca-toggle-opt input:focus-visible + span { outline: 3px solid var(--ca-focus); outline-offset: 2px; position: relative; z-index: 2; }
+.ca-field.invalid .ca-toggle-opts { outline: 2px solid var(--ca-danger); outline-offset: 2px; }
+@media (forced-colors: active) {
+  .ca-toggle-opt input:checked + span { forced-color-adjust: none; background: Highlight; color: HighlightText; border-color: Highlight; }
+}
+
+/* Suggestion combobox: the input, a clear button once it has a value, and a button that shows
+   the whole list. The list itself floats (position: fixed) and follows the field. */
+.ca-combo { display: flex; align-items: stretch; min-width: 0; }
+.ca-combo > .ca-input { flex: 1 1 auto; min-width: 0; border-radius: var(--ca-radius) 0 0 var(--ca-radius); }
+.ca-field .ca-combo > .ca-input { width: auto; }
+.ca-combo-btn, .ca-combo-clear {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: var(--ca-target); min-height: var(--ca-target); margin-left: -1px; padding: 0;
+  border: 1px solid var(--ca-border-strong); background: var(--ca-surface); cursor: pointer;
+}
+.ca-combo-btn { border-radius: 0 var(--ca-radius) var(--ca-radius) 0; color: var(--ca-muted); }
+.ca-combo-btn:hover, .ca-combo-clear:hover { background: var(--ca-surface-2); color: var(--ca-text); }
+.ca-combo > [hidden] { display: none; }
+.ca-combo > .ca-combo-clear:last-child, .ca-combo > .ca-combo-clear:has(+ [hidden]) { border-radius: 0 var(--ca-radius) var(--ca-radius) 0; }
+.ca-combo > .ca-input:has(+ [hidden] + [hidden]) { border-radius: var(--ca-radius); }
+.ca-field.invalid .ca-combo > .ca-input { border: 2px solid var(--ca-danger); }
+.ca-combo-pop {
+  position: fixed; z-index: 70; max-width: min(30rem, calc(100vw - 1rem));
+  background: var(--ca-surface); color: var(--ca-text); border: 1px solid var(--ca-border-strong); border-radius: var(--ca-radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16); padding: 0.25rem;
+}
+.ca-combo-list { list-style: none; margin: 0; padding: 0; max-height: min(50vh, 20rem); overflow-y: auto; }
+.ca-combo-opt {
+  position: relative; display: flex; align-items: center; min-height: var(--ca-target); padding: 0 0.75rem 0 2rem;
+  border-radius: 0.1875rem; cursor: pointer; overflow-wrap: anywhere;
+}
+.ca-combo-opt:hover { background: var(--ca-surface-2); }
+.ca-combo-opt[aria-selected="true"] { background: var(--ca-surface-2); outline: 2px solid var(--ca-focus); outline-offset: -2px; }
+/* The current value is ticked: a shape as well as aria-checked, never colour alone. */
+.ca-combo-opt[aria-checked="true"]::before {
+  content: ""; position: absolute; left: 0.875rem; top: 50%; width: 0.375rem; height: 0.75rem;
+  border: solid var(--ca-text); border-width: 0 2px 2px 0; transform: translateY(-65%) rotate(45deg);
+}
+.ca-combo-more { color: var(--ca-muted); font-size: 0.875rem; padding: 0.375rem 0.75rem 0.25rem; border-top: 1px solid var(--ca-border); }
+.ca-combo-more[hidden] { display: none; }
 .ca-kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
 .ca-kv dt { color: var(--ca-muted); }
 .ca-kv dd { margin: 0; font-family: var(--ca-mono); font-size: 0.875rem; word-break: break-all; }
@@ -316,6 +392,12 @@ body.ca-dragging::after {
 .ca-bar-track { height: 0.875rem; background: var(--ca-bar-track); border-radius: 2px; overflow: hidden; }
 .ca-bar-fill { display: block; height: 100%; min-width: 3px; background: var(--ca-bar); border-radius: 2px; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 .ca-bar-value { color: var(--ca-text); font-variant-numeric: tabular-nums; text-align: right; }
+.ca-pie { display: block; width: min(100%, 14rem); height: auto; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+.ca-pie path, .ca-pie circle { stroke: var(--ca-surface); stroke-width: 0.015; }
+.ca-swatch {
+  display: inline-block; width: 0.875rem; height: 0.875rem; margin-right: 0.5rem; vertical-align: -0.125rem;
+  border: 1px solid var(--ca-border-strong); border-radius: 2px; print-color-adjust: exact; -webkit-print-color-adjust: exact;
+}
 
 /* ── Footer & toast ─────────────────────────────────── */
 .ca-footer {
@@ -450,7 +532,8 @@ body.ca-dragging::after {
   .ca-card { padding: 0.75rem; margin-bottom: 0.75rem; }
 }
 @media print {
-  .ca-header .ca-toolbar, .ca-banners, .ca-tabs, .ca-tv-bar, .ca-footer, .ca-skip, .ca-quick-menu { display: none !important; }
+  .ca-header .ca-toolbar, .ca-banners, .ca-tabs, .ca-tv-bar, .ca-footer, .ca-skip, .ca-quick-menu, .ca-combo-pop { display: none !important; }
+  .ca-inline { border: none; padding: 0; }
   .ca-table .ca-edit-col, .ca-table .ca-edit-cell, .ca-quick-caret { display: none; }
   .ca-header { position: static; border-top: none; }
   body { background: #fff; }

@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const CORE_VERSION = '0.4.0';
+  const CORE_VERSION = '0.5.0';
   const FORMAT = 'carryall/1';
   const PAGE = 500;                 // rows rendered before "show more"
   const SOFT_ROWS = 5000;           // size advisory thresholds
@@ -647,6 +647,18 @@
       return formatAs(col.format || (typeof v === 'number' ? 'number' : 'text'), v, col);
     }
     return formatAs(col.type, v, col);
+  }
+  // "showIf": whether a column applies to a row. A field that does not apply is hidden in the
+  // form and the sheet, blank in tables, not editable inline, and neither required nor range
+  // checked. Its value stays in the row, so switching back restores it.
+  function showIfValue(t, row, col) { return !col?.showIf || !!col.showIf(row, makeApi()); }
+  function applies(t, row, col) {
+    try { return showIfValue(t, row, col); }
+    catch (e) {
+      const w = `${t}.${col.key} showIf: ${e.message}`;
+      if (!warned.has(w)) { warned.add(w); console.warn(`[carryall] showIf of ${t}.${col.key} failed`, e); }
+      return true;
+    }
   }
   function isNumericCol(col) {
     return NUMERIC.includes(col.type) || (col.type === 'computed' && ['number', 'integer', 'currency', 'percent'].includes(col.format));
@@ -1952,27 +1964,33 @@
   let fieldSeq = 0;
   function makeField(label, control, { required = false, help = null } = {}) {
     const id = 'ca-f' + (++fieldSeq);
-    const target = control && control.matches && (control.matches('input, select, textarea') ? control : control.querySelector('input, select, textarea'));
+    // A toggle is a fieldset of radio buttons: its legend is the label, and the group carries
+    // the description, required and invalid states.
+    const group = control && control.matches && control.matches('fieldset') ? control : null;
+    const target = group ? group.querySelector('input') : control && control.matches && (control.matches('input, select, textarea') ? control : control.querySelector('input, select, textarea'));
     const err = h('div', { class: 'ca-error', id: id + '-err', 'aria-live': 'polite' });
     const helpEl = help ? h('div', { class: 'ca-help', id: id + '-help' }, help) : null;
     const mark = required ? h('span', { 'aria-hidden': 'true' }, ' *') : '';
-    const isCheck = target && target.type === 'checkbox';
-    let lab;
-    if (target && !isCheck) lab = h('label', { for: id }, label, mark);
+    const isCheck = !group && target && target.type === 'checkbox';
+    let lab = null;
+    if (group) { const lg = group.querySelector('legend'); lg.className = 'ca-label'; lg.replaceChildren(label, mark); }
+    else if (target && !isCheck) lab = h('label', { for: id }, label, mark);
     else lab = h('div', { class: 'ca-label', id: id + '-lbl' }, label, mark);
+    const aria = group || target;
     if (target) {
-      target.id = id;
-      target.setAttribute('aria-describedby', [helpEl && id + '-help', id + '-err'].filter(Boolean).join(' '));
-      if (required) target.setAttribute('aria-required', 'true');
+      if (!group) target.id = id;
+      aria.setAttribute('aria-describedby', [helpEl && id + '-help', id + '-err'].filter(Boolean).join(' '));
+      if (required) aria.setAttribute('aria-required', 'true');
       if (isCheck) target.setAttribute('aria-labelledby', id + '-lbl');
     }
     const wrap = h('div', { class: 'ca-field' }, lab, control, helpEl, err);
     return {
-      wrap, target,
+      wrap,
+      get target() { return group ? group.querySelector('input:checked') || target : target; },
       setError(msg) {
         err.textContent = msg || '';
         wrap.classList.toggle('invalid', !!msg);
-        if (target) { if (msg) target.setAttribute('aria-invalid', 'true'); else target.removeAttribute('aria-invalid'); }
+        if (aria) { if (msg) aria.setAttribute('aria-invalid', 'true'); else aria.removeAttribute('aria-invalid'); }
       },
     };
   }
@@ -1999,36 +2017,158 @@
     for (const src of col.suggestFrom || []) { const [tk, ck] = String(src).split('.'); if (S.app.tables[tk]?.columns[ck]) sources.push([tk, ck]); }
     return suggestList(sources.flatMap(([tk, ck]) => tableRows(tk).map(r => rawValue(tk, r, ck))));
   }
-  let listSeq = 0;
-  function fieldInput(col, value, onChange, t = null) {
+  // Suggestions that contain the typed text anywhere, case ignored, at most `limit` of them.
+  function suggestMatches(values, text, limit = 50) {
+    const q = String(text ?? '').trim().toLowerCase();
+    const all = q ? values.filter(v => v.toLowerCase().includes(q)) : values;
+    return { items: all.slice(0, limit), more: all.length > limit };
+  }
+
+  // Keep a fixed popup below its anchor (above it when there is no room), following it when the
+  // page scrolls. gone() is called when the anchor leaves the screen. Returns a function that stops.
+  function followAnchor(anchor, pop, gone, { matchWidth = false } = {}) {
+    const place = () => {
+      if (!anchor.isConnected) { gone(); return; }
+      const r = anchor.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > innerHeight) { gone(); return; }
+      if (matchWidth) pop.style.minWidth = r.width + 'px';
+      const mh = pop.offsetHeight, mw = pop.offsetWidth;
+      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - mw - 8)) + 'px';
+      pop.style.top = (r.bottom + 4 + mh <= innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top - 4 - mh)) + 'px';
+    };
+    const moved = e => { if (!pop.contains(e.target)) place(); };
+    window.addEventListener('scroll', moved, true);
+    window.addEventListener('resize', moved);
+    place();
+    const stop = () => { window.removeEventListener('scroll', moved, true); window.removeEventListener('resize', moved); };
+    stop.place = place;
+    return stop;
+  }
+
+  // ── Suggestion combobox (the ARIA 1.2 combobox pattern) ────────────────
+  // A text input with a list of the values already in use. Typing filters the list by text
+  // anywhere in each value; the button beside it (or Alt+Down) shows the whole list whatever is
+  // typed, so other values are never hidden. Any other value can still be typed.
+  let comboSeq = 0;
+  let comboOpen = null;   // the close function of the list that is showing
+  function combobox(input, values, label) {
+    const id = 'ca-cb' + (++comboSeq);
+    const name = label.toLowerCase();
+    const list = h('ul', { class: 'ca-combo-list', role: 'listbox', id: id + '-list', 'aria-label': label });
+    const note = h('div', { class: 'ca-combo-more' }, 'Type to narrow the list');
+    // A press inside the list keeps the focus in the input, so choosing never ends the edit.
+    const pop = h('div', { class: 'ca-combo-pop', onpointerdown: e => e.preventDefault() }, list, note);
+    let items = [], active = -1, follow = null;
+    Object.entries({ role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': list.id, autocomplete: 'off' })
+      .forEach(([k, v]) => input.setAttribute(k, v));
+    const keep = e => e.preventDefault();
+    const clear = h('button', { class: 'ca-combo-clear', type: 'button', 'aria-label': `Clear ${name}`, title: `Clear ${name}`, onpointerdown: keep,
+      onclick: () => { close(); setValue(''); input.focus(); } }, icon('close'));
+    const toggle = h('button', { class: 'ca-combo-btn', type: 'button', tabindex: '-1', 'aria-label': `Show all ${name}`, title: `Show all ${name}`, onpointerdown: keep,
+      onclick: () => { if (follow) close(); else show(true); input.focus(); } }, h('span', { 'aria-hidden': 'true' }, '▾'));
+    const wrap = h('div', { class: 'ca-combo' }, input, clear, toggle);
+    const sync = () => { clear.hidden = !input.value; toggle.hidden = !values.length; };
+    function setValue(v) {
+      input.value = v;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      sync();
+    }
+    function show(all, highlight = false) {
+      const m = suggestMatches(values, all ? '' : input.value);
+      items = m.items;
+      if (!items.length) { close(); return; }
+      const cur = input.value.trim();
+      list.replaceChildren(...items.map((v, i) => h('li', { class: 'ca-combo-opt', role: 'option', id: `${id}-o${i}`, 'aria-selected': 'false',
+        'aria-checked': String(v === cur), onclick: () => { close(); setValue(v); input.focus(); } }, v)));
+      note.hidden = !m.more;
+      active = -1;
+      input.removeAttribute('aria-activedescendant');
+      if (!follow) {
+        comboOpen?.();
+        // Inside a modal dialog the list must be in the dialog, or it could not be reached.
+        (input.closest('dialog') || document.body).append(pop);
+        follow = followAnchor(wrap, pop, close, { matchWidth: true });
+        comboOpen = close;
+        input.setAttribute('aria-expanded', 'true');
+      } else follow.place();
+      if (highlight) move(Math.max(0, items.indexOf(cur)) - active);
+    }
+    function close() {
+      if (!follow) return;
+      follow(); follow = null;
+      if (comboOpen === close) comboOpen = null;
+      pop.remove();
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    }
+    function move(d) {
+      const opts = [...list.children];
+      if (!opts.length) return;
+      active = (active + d + opts.length) % opts.length;
+      opts.forEach((o, i) => o.setAttribute('aria-selected', String(i === active)));
+      input.setAttribute('aria-activedescendant', opts[active].id);
+      opts[active].scrollIntoView({ block: 'nearest' });
+    }
+    input.addEventListener('input', e => { sync(); if (e.isTrusted) show(false); });
+    input.addEventListener('blur', close);
+    // Keys the list uses do not reach the form, dialog or table cell around it.
+    input.addEventListener('keydown', e => {
+      const stop = () => { e.preventDefault(); e.stopPropagation(); };
+      if (e.key === 'ArrowDown' && e.altKey) { stop(); show(true); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { stop(); if (follow) move(e.key === 'ArrowDown' ? 1 : -1); else show(true, true); }
+      else if (e.key === 'Enter' && follow && active >= 0) { stop(); const v = items[active]; close(); setValue(v); }
+      else if (e.key === 'Escape' && follow) { stop(); close(); }
+      else if (e.key === 'Enter' || e.key === 'Tab') close();
+    });
+    sync();
+    return wrap;
+  }
+
+  // Two to four options as a row of joined buttons. They are real radio inputs in a fieldset, so
+  // arrow keys move between them; the chosen one is filled, bold and ticked, never colour alone.
+  let toggleSeq = 0;
+  function toggleInput(col, value, set, name) {
+    const group = 'ca-tg' + (++toggleSeq);
+    const opts = [...(col.options || []), ...(col.required ? [] : [null])];
+    return h('fieldset', { class: 'ca-toggle', role: 'radiogroup' },
+      h('legend', { class: 'ca-visually-hidden' }, name || col.label),
+      h('div', { class: 'ca-toggle-opts' }, opts.map(o => h('label', { class: 'ca-toggle-opt' },
+        h('input', { type: 'radio', name: group, value: o ?? '', checked: (value ?? null) === o, onchange: e => { if (e.target.checked) set(o); } }),
+        h('span', o ?? emptyText)))));
+  }
+
+  // The input for one column. name, when given, is the control's accessible name (a table cell
+  // has no visible label); in a form, makeField labels it.
+  function fieldInput(col, value, onChange, t = null, name = null) {
     const set = v => onChange(v);
+    const named = el => { if (name) el.setAttribute('aria-label', name); return el; };
     switch (col.type) {
       case 'longtext':
-        return h('textarea', { class: 'ca-textarea', value: value ?? '', oninput: e => set(e.target.value || null) });
+        return named(h('textarea', { class: 'ca-textarea', value: value ?? '', oninput: e => set(e.target.value || null) }));
       case 'number': case 'currency': case 'percent':
-        return h('input', { class: 'ca-input', type: 'number', step: col.step ?? 'any', min: col.min, max: col.max, value: value ?? '',
-          oninput: e => set(e.target.value === '' ? null : Number(e.target.value)) });
+        return named(h('input', { class: 'ca-input', type: 'number', step: col.step ?? 'any', min: col.min, max: col.max, value: value ?? '',
+          oninput: e => set(e.target.value === '' ? null : Number(e.target.value)) }));
       case 'date':
-        return h('input', { class: 'ca-input', type: 'date', value: value ?? '', oninput: e => set(e.target.value || null) });
-      case 'boolean':
-        return h('label', { class: 'ca-check' }, h('input', { type: 'checkbox', checked: !!value, onchange: e => set(e.target.checked) }), col.checkLabel || 'Yes');
+        return named(h('input', { class: 'ca-input', type: 'date', value: value ?? '', oninput: e => set(e.target.value || null) }));
+      case 'boolean': {
+        const box = named(h('input', { type: 'checkbox', checked: !!value, onchange: e => set(e.target.checked) }));
+        return h('label', { class: 'ca-check' }, box, col.checkLabel || 'Yes');
+      }
       case 'choice':
-        return h('select', { class: 'ca-select', onchange: e => set(e.target.value || null) },
+        if (col.control === 'toggle') return toggleInput(col, value, set, name);
+        return named(h('select', { class: 'ca-select', onchange: e => set(e.target.value || null) },
           h('option', { value: '' }, emptyText),
-          (col.options || []).map(o => h('option', { value: o, selected: o === value }, o)));
+          (col.options || []).map(o => h('option', { value: o, selected: o === value }, o))));
       case 'ref': {
         const opts = tableRows(col.table).map(r => [r.id, displayOf(col.table, r)]).sort((a, b) => a[1].localeCompare(b[1]));
-        return h('select', { class: 'ca-select', onchange: e => set(e.target.value || null) },
-          h('option', { value: '' }, emptyText), opts.map(([id, label]) => h('option', { value: id, selected: id === value }, label)));
+        return named(h('select', { class: 'ca-select', onchange: e => set(e.target.value || null) },
+          h('option', { value: '' }, emptyText), opts.map(([id, label]) => h('option', { value: id, selected: id === value }, label))));
       }
       default: {
-        const input = h('input', { class: 'ca-input', type: 'text', value: value ?? '', maxlength: col.maxLength, oninput: e => set(e.target.value || null) });
+        const input = named(h('input', { class: 'ca-input', type: 'text', value: value ?? '', maxlength: col.maxLength, oninput: e => set(e.target.value || null) }));
         if (col.type !== 'text' || !t || col.suggest === false || !(col.suggest || col.suggestFrom)) return input;
-        // Any value can still be typed: the list only offers what is already in use.
-        const listId = 'ca-list' + (++listSeq);
-        input.setAttribute('list', listId);
-        input.setAttribute('autocomplete', 'off');
-        return h('div', { class: 'ca-suggest' }, input, h('datalist', { id: listId }, suggestValues(t, col).map(v => h('option', { value: v }))));
+        return combobox(input, suggestValues(t, col), col.label);
       }
     }
   }
@@ -2037,7 +2177,7 @@
     const td = t === 'settings' ? S.app.settings : S.app.tables[t];
     for (const c of Object.values(td.columns)) {
       const v = row[c.key];
-      if (c.type === 'computed') continue;
+      if (c.type === 'computed' || !applies(t, row, c)) continue;
       const name = c.label.toLowerCase();
       if (c.required && (v == null || v === '')) errs[c.key] = ['choice', 'ref'].includes(c.type) ? `Choose the ${name}` : `Enter the ${name}`;
       else if (typeof v === 'number' && c.min != null && v < c.min) errs[c.key] = `${c.label} must be ${c.min} or more`;
@@ -2071,21 +2211,31 @@
     const ro = S.readOnly || td.readOnly;
     const fields = {};
     const computedEls = [];
-    const refreshComputed = () => computedEls.forEach(([el, c]) => { el.textContent = formatCell(t, draft, c.key) || emptyText; });
+    const conditional = [];   // [wrap, column] for columns with showIf
+    // After every change: the calculated fields, and which fields apply. Fields are shown or
+    // hidden in place, so focus and typed values are kept.
+    const refresh = () => {
+      computedEls.forEach(([el, c]) => { el.textContent = formatCell(t, draft, c.key) || emptyText; });
+      conditional.forEach(([wrap, c]) => { wrap.hidden = !applies(t, draft, c); });
+    };
     const body = h('div', { class: 'ca-form' }, Object.values(td.columns).filter(c => !c.hidden && !c.hideInForm).map(c => {
+      let wrap;
       if (c.type === 'computed') {
         const el = h('div', { class: 'ca-readonly', 'aria-live': 'polite' });
         computedEls.push([el, c]);
-        return makeField(c.label + ' (calculated)', el).wrap;
+        wrap = makeField(c.label + ' (calculated)', el).wrap;
+      } else {
+        const input = ro ? h('div', { class: 'ca-readonly' }, formatCell(t, draft, c.key) || emptyText) : fieldInput(c, draft[c.key], v => { draft[c.key] = v; refresh(); }, t);
+        const f = makeField(c.label, input, { required: c.required && !ro, help: c.help });
+        fields[c.key] = f;
+        wrap = f.wrap;
       }
-      const input = ro ? h('div', { class: 'ca-readonly' }, formatCell(t, draft, c.key) || emptyText) : fieldInput(c, draft[c.key], v => { draft[c.key] = v; refreshComputed(); }, t);
-      const f = makeField(c.label, input, { required: c.required && !ro, help: c.help });
-      fields[c.key] = f;
-      return f.wrap;
+      if (c.showIf) conditional.push([wrap, c]);
+      return wrap;
     }));
     const formErr = h('div', { class: 'ca-error', role: 'alert' });
     body.append(formErr);
-    refreshComputed();
+    refresh();
     const buttons = [];
     if (existing && !ro) buttons.push({ label: 'Delete', danger: true, left: true, onClick: async () => {
       const refs = referencesTo(t, id);
@@ -2098,8 +2248,13 @@
     buttons.push({ label: ro ? 'Close' : 'Cancel', value: false });
     const check = () => {
       const errs = validateRow(t, draft);
-      formErr.textContent = errs._form || '';
-      return showErrors(fields, errs) && !errs._form;
+      // A message for a field that is not showing goes with the form's own message.
+      const shown = {}, other = [];
+      for (const [k, m] of Object.entries(errs)) {
+        if (k !== '_form' && fields[k] && !fields[k].wrap.hidden) shown[k] = m; else other.push(m);
+      }
+      formErr.textContent = other.join(' ');
+      return showErrors(fields, shown) && !other.length;
     };
     if (!ro) buttons.push({ label: existing ? 'Save changes' : `Add ${td.singular}`, primary: true, onClick: () => {
       if (!check()) return false;
@@ -2237,6 +2392,40 @@
         ];
       }));
     },
+    // Pie chart drawn as SVG. Slice i takes UI.palette[i] (in turn), whatever its value, so a
+    // legend built from the same items in the same order matches it. The caller shows that
+    // legend, normally a table with UI.swatch(colour) beside each name, so colour is never the
+    // only signal. items: [{label, value}]; values of zero or less get no slice.
+    pieChart(items, { format = v => String(v), title } = {}) {
+      const list = items.map((it, i) => ({ label: String(it.label ?? ''), value: Number(it.value) || 0, color: UI.palette[i % UI.palette.length] }));
+      const total = list.reduce((s, it) => s + Math.max(0, it.value), 0);
+      if (!total) return h('div', { class: 'ca-bars-empty ca-muted' }, 'No data');
+      const pct = new Intl.NumberFormat(S.app?.locale || 'en-GB', { style: 'percent', maximumFractionDigits: 1 });
+      const ns = 'http://www.w3.org/2000/svg';
+      const el = (tag, attrs, ...kids) => {
+        const n = document.createElementNS(ns, tag);
+        for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+        n.append(...kids);
+        return n;
+      };
+      const shown = list.filter(it => it.value > 0);
+      const svg = el('svg', { class: 'ca-pie', viewBox: '-1.05 -1.05 2.1 2.1', role: 'img',
+        'aria-label': `${title || 'Pie chart'}: ${shown.map(it => `${it.label} ${pct.format(it.value / total)} (${format(it.value)})`).join(', ')}` });
+      let a = 0;
+      for (const it of shown) {
+        const share = it.value / total;
+        const tip = el('title', {}, `${it.label}: ${format(it.value)} (${pct.format(share)})`);
+        const style = `fill: ${it.color}`;
+        if (share >= 0.99999) { svg.append(el('circle', { r: 1, style }, tip)); break; }
+        // Clockwise from the top.
+        const pt = x => `${Math.sin(x * 2 * Math.PI).toFixed(5)} ${(-Math.cos(x * 2 * Math.PI)).toFixed(5)}`;
+        svg.append(el('path', { d: `M0 0L${pt(a)}A1 1 0 ${share > 0.5 ? 1 : 0} 1 ${pt(a + share)}Z`, style }, tip));
+        a += share;
+      }
+      return svg;
+    },
+    // A small square of a chart colour, for legends. Decorative: the text beside it names it.
+    swatch(color) { return h('span', { class: 'ca-swatch', 'aria-hidden': 'true', style: { background: color } }); },
     // Chart series colours in style-guide order, as CSS custom property references.
     palette: ['red', 'purple', 'blue-dark', 'teal', 'pink', 'green', 'blue-bright', 'sage', 'orange', 'slate'].map(c => `var(--ca-${c})`),
     pill(text, color) { return h('span', { class: `ca-pill${color ? ' ' + color : ''}` }, text); },
@@ -2264,6 +2453,7 @@
     catch (e) { console.error(e); el.append(h('div', { class: 'ca-card' }, h('strong', 'This view failed to render: '), e.message)); }
   }
   function cellNode(t, row, col) {
+    if (!applies(t, row, col)) return '';
     const text = formatCell(t, row, col.key);
     if (col.type === 'choice' && col.colors && text) return UI.pill(text, col.colors[row[col.key]]);
     if (col.type === 'computed' && col.colors) {
@@ -2314,6 +2504,11 @@
     // "open": selecting a row shows it on that sheet tab; the first column edits it directly.
     const sheetTab = view.open ? S.app.views.findIndex(v => v.type === 'sheet' && v.title === view.open && v.table === t) : -1;
     const quick = ro ? [] : (view.quickEdit || []).filter(k => td.columns[k]?.type === 'choice' && td.columns[k].options?.length);
+    const inline = ro ? [] : (view.inlineEdit || []).filter(k => INLINE_TYPES.includes(td.columns[k]?.type) && !quick.includes(k));
+    let shownIds = [];
+    // After an inline edit the rows keep their places until the sort is next changed, so a row
+    // does not jump away while someone works down a column.
+    const pin = () => { if (vs.sort) vs.pin = shownIds; };
     const count = h('span', { class: 'ca-muted ca-count' });
     const tbody = h('tbody'), tfoot = h('tfoot');
     const filters = (view.filters || []).map(fk => {
@@ -2355,7 +2550,7 @@
       const active = vs.sort && vs.sort.key === c.key;
       return h('th', { class: `sortable${isNumericCol(c) ? ' num' : ''}`, scope: 'col', 'aria-sort': active ? (vs.sort.dir === 'desc' ? 'descending' : 'ascending') : null },
         h('button', { class: 'ca-sort-btn', type: 'button', dataset: { caFocus: `sort.${key}.${c.key}` },
-          onclick: () => { vs.sort = active && vs.sort.dir === 'asc' ? { key: c.key, dir: 'desc' } : active ? null : { key: c.key, dir: 'asc' }; render(); } },
+          onclick: () => { vs.sort = active && vs.sort.dir === 'asc' ? { key: c.key, dir: 'desc' } : active ? null : { key: c.key, dir: 'asc' }; vs.pin = null; render(); } },
           c.label, h('span', { class: 'ca-sort', 'aria-hidden': 'true' }, active ? (vs.sort.dir === 'asc' ? '▲' : '▼') : '')));
     })));
     el.append(h('div', { class: 'ca-table-wrap' }, h('table', { class: 'ca-table' }, thead, tbody, tfoot)));
@@ -2374,8 +2569,9 @@
         // Enter on a button inside the row belongs to that button, not the row.
         onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) act(); } },
         sheetTab >= 0 && editCell(r),
-        cols.map(c => quick.includes(c.key)
+        cols.map(c => quick.includes(c.key) && applies(t, r, c)
           ? h('td', { class: 'ca-quick-cell', onclick: e => e.stopPropagation() }, quickEditButton(t, r, c, key))
+          : inline.includes(c.key) ? inlineCell(t, r, c, key, pin)
           : h('td', { class: `${isNumericCol(c) ? 'num' : ''}${c.type === 'computed' ? ' ca-computed' : ''}${c.type === 'longtext' ? ' ca-long' : ''}` }, cellNode(t, r, c))));
     };
     const refresh = () => withCalc(refreshRows);
@@ -2384,16 +2580,21 @@
       let rows = all.filter(r => (!view.where || view.where(r, api)) && Object.entries(vs.filters).every(([fk, fv]) => !fv || String(rawValue(t, r, fk)) === fv));
       if (vs.q) {
         const q = vs.q.toLowerCase();
-        rows = rows.filter(r => cols.some(c => formatCell(t, r, c.key).toLowerCase().includes(q)));
+        rows = rows.filter(r => cols.some(c => applies(t, r, c) && formatCell(t, r, c.key).toLowerCase().includes(q)));
       }
       if (vs.sort) rows = sortRows(t, rows, vs.sort);
+      if (vs.sort && vs.pin) {
+        const at = new Map(vs.pin.map((id, i) => [id, i]));
+        rows = rows.map((r, i) => [at.get(r.id) ?? vs.pin.length + i, r]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+      }
+      shownIds = rows.map(r => r.id);
       const span = cols.length + (sheetTab >= 0 ? 1 : 0);
       tbody.replaceChildren(...(rows.length ? rows.slice(0, vs.limit).map(rowNode)
         : [h('tr', h('td', { class: 'ca-empty', colspan: span }, all.length ? 'No matching rows' : `No ${td.label.toLowerCase()} yet`))]));
       if (view.totals?.length && rows.length) {
         tfoot.replaceChildren(h('tr', sheetTab >= 0 && h('td', ''), cols.map((c, i) => {
           if (!view.totals.includes(c.key)) return h('td', i === 0 ? 'Total' : '');
-          const sum = rows.reduce((s, r) => s + (Number(rawValue(t, r, c.key)) || 0), 0);
+          const sum = rows.reduce((s, r) => s + (applies(t, r, c) ? Number(rawValue(t, r, c.key)) || 0 : 0), 0);
           return h('td', { class: 'num' }, formatAs(c.type === 'computed' ? c.format || 'number' : c.type, sum, c));
         })));
       } else tfoot.replaceChildren();
@@ -2459,29 +2660,119 @@
         else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); closeQuickMenu(true); }
       } }, items);
     document.body.append(menu);
-    // Below the button (above it when there is no room), following it when the page scrolls.
-    const place = () => {
-      const r = btn.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > innerHeight) { closeQuickMenu(); return; }
-      const mh = menu.offsetHeight, mw = menu.offsetWidth;
-      menu.style.left = Math.max(8, Math.min(r.left, innerWidth - mw - 8)) + 'px';
-      menu.style.top = (r.bottom + 4 + mh <= innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top - 4 - mh)) + 'px';
-    };
-    place();
+    const stop = followAnchor(btn, menu, () => closeQuickMenu());
     // A press on the menu's own button is left to its click, which closes the menu.
     const outside = e => { if (!menu.contains(e.target) && !btn.contains(e.target)) closeQuickMenu(); };
-    const moved = e => { if (!menu.contains(e.target)) place(); };
     document.addEventListener('pointerdown', outside, true);
-    window.addEventListener('scroll', moved, true);
-    window.addEventListener('resize', moved);
-    quickOpen = { btn, menu, cleanup: () => {
-      document.removeEventListener('pointerdown', outside, true);
-      window.removeEventListener('scroll', moved, true);
-      window.removeEventListener('resize', moved);
-    } };
+    quickOpen = { btn, menu, cleanup: () => { document.removeEventListener('pointerdown', outside, true); stop(); } };
     btn.setAttribute('aria-expanded', 'true');
     (items[options.indexOf(current)] || items[0]).focus({ preventScroll: true });
   }
+  // ── Inline edit: change values straight from a table ──────────────────
+  // Each editable cell is a button showing its value. Selecting it swaps in the column's input.
+  // Enter, Tab or leaving the cell saves the row through saveRow, so checks, onSave rules and
+  // undo apply (one undo step per change); Escape puts the old value back. A change that breaks
+  // a check keeps the cell open with the message under it.
+  const INLINE_TYPES = ['text', 'number', 'currency', 'percent', 'date', 'boolean', 'choice', 'ref'];
+  let inlineOpen = null;   // { commit, focus } for the cell being edited
+  let inlineSeq = 0;
+  let pointerDown = false, pointerTarget = null;
+  const inlineKey = (key, id, ck) => `inline.${key}.${id}.${ck}`;
+  const findInline = (key, id, ck) => document.querySelector(`[data-ca-focus="${CSS.escape(inlineKey(key, id, ck))}"]`);
+  function inlineCell(t, row, col, key, pin) {
+    const cls = `ca-inline-cell${isNumericCol(col) ? ' num' : ''}`;
+    if (!applies(t, row, col)) return h('td', { class: cls });
+    const td = S.app.tables[t];
+    const text = formatCell(t, row, col.key);
+    const cell = h('td', { class: cls, onclick: e => e.stopPropagation() });
+    // Up and Down move to the same column in the next row that has the cell.
+    const step = e => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      let tr = cell.closest('tr'), to = null;
+      while (!to && (tr = e.key === 'ArrowDown' ? tr?.nextElementSibling : tr?.previousElementSibling)) to = tr.querySelector(`.ca-inline[data-ca-col="${CSS.escape(col.key)}"]`);
+      if (to) { e.preventDefault(); to.focus(); }
+    };
+    cell.append(h('button', { class: 'ca-inline', type: 'button', dataset: { caFocus: inlineKey(key, row.id, col.key), caCol: col.key },
+      'aria-label': `${col.label} of ${displayOf(t, row) || td.singular}: ${text || emptyText}. Edit`,
+      onclick: () => editInline(cell, t, row.id, col, key, pin), onkeydown: step }, cellNode(t, row, col)));
+    return cell;
+  }
+  function editInline(cell, t, id, col, key, pin) {
+    // A cell still open is saved first. If it cannot be, it stays open and takes the focus back.
+    if (inlineOpen && !inlineOpen.commit()) { inlineOpen.focus(); return; }
+    // Saving it drew the table again: carry on in the new copy of this cell.
+    if (!cell.isConnected) { findInline(key, id, col.key)?.click(); return; }
+    const row = rowById(t, id);
+    if (!row || S.readOnly) return;
+    const td = S.app.tables[t];
+    let value = clone(row[col.key] ?? null);
+    const before = [...cell.childNodes];
+    const editor = fieldInput(col, value, v => { value = v; }, t, `${col.label} of ${displayOf(t, row) || td.singular}`);
+    const err = h('div', { class: 'ca-error', id: `ca-inline-err${++inlineSeq}`, 'aria-live': 'polite' });
+    const box = h('div', { class: 'ca-inline-edit' }, editor, err);
+    const control = () => box.querySelector('input:checked, input:not([type="radio"]), select') || box.querySelector('input');
+    let done = false;
+    const close = refocus => {
+      done = true;
+      if (inlineOpen === state) inlineOpen = null;
+      cell.classList.remove('editing', 'invalid');
+      cell.replaceChildren(...before);
+      if (refocus) before[0]?.focus();
+    };
+    // Returns false when the change breaks a check: the cell stays open with the message.
+    const commit = () => {
+      if (done) return true;
+      const cur = rowById(t, id);
+      if (!cur || sameVal(cur[col.key] ?? null, value ?? null)) { close(false); return true; }
+      pin();
+      done = true;
+      const errs = saveRow(t, cur, { ...clone(cur), [col.key]: value });
+      if (!Object.keys(errs).length) { if (inlineOpen === state) inlineOpen = null; return true; }
+      done = false;
+      // A problem with another field cannot be fixed in this cell: offer the form, as quick edit does.
+      const own = errs[col.key];
+      err.replaceChildren(own || errs._form || Object.values(errs)[0]);
+      if (!own) err.append(' ', h('button', { class: 'ca-btn link ca-inline-form', type: 'button',
+        onclick: () => { close(false); openForm(t, id, { [col.key]: value }, { showErrors: true }); } }, `Edit ${td.singular} in the form`));
+      const target = box.querySelector('fieldset') || control();
+      target.setAttribute('aria-invalid', 'true');
+      target.setAttribute('aria-describedby', err.id);
+      cell.classList.add('invalid');
+      return false;
+    };
+    // After a save the table is drawn again: focus this cell's button, or open the next cell.
+    const after = by => {
+      const b = findInline(key, id, col.key);
+      if (!b) { document.getElementById('ca-main')?.focus(); return; }
+      const list = [...b.closest('tr').querySelectorAll('.ca-inline')];
+      const next = by ? list[list.indexOf(b) + by] : null;
+      if (next) next.click(); else b.focus();
+    };
+    box.addEventListener('keydown', e => {
+      if (e.target.closest('.ca-error') && e.key !== 'Escape') return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (commit()) after(0); }
+      else if (e.key === 'Tab') { e.preventDefault(); if (commit()) after(e.shiftKey ? -1 : 1); }
+    });
+    box.addEventListener('focusout', e => {
+      if (done || box.contains(e.relatedTarget)) return;
+      if (!pointerDown) { commit(); return; }
+      // A press elsewhere is left to its click first (which may open another cell), then saved.
+      document.addEventListener('pointerup', () => setTimeout(() => {
+        if (done) return;
+        if (box.contains(pointerTarget)) control()?.focus();
+        else if (!box.contains(document.activeElement)) commit();
+      }), { once: true });
+    });
+    const state = { commit, focus: () => control()?.focus() };
+    inlineOpen = state;
+    cell.classList.add('editing');
+    cell.replaceChildren(box);
+    const c = control();
+    c?.focus();
+    if (c && /^(text|number)$/.test(c.type)) c.select();
+  }
+
   function groupLabel(t, row, col, bucket) {
     if ((col.type === 'date' || (col.type === 'computed' && col.format === 'date')) && bucket) {
       const v = rawValue(t, row, col.key);
@@ -2528,15 +2819,18 @@
     else list.sort((a, b) => (b.values[0] ?? 0) - (a.values[0] ?? 0));
     const fmts = metrics.map(m => metricFormat(t, m));
     const card = h('div', { class: 'ca-card' }, view.title && h('h2', view.title));
-    if (view.chart !== false) {
+    // "pie" charts the first metric, and the table below is its legend, so it always shows.
+    const pie = view.chart === 'pie';
+    if (pie) card.append(UI.pieChart(list.map(g => ({ label: g.label, value: g.values[0] || 0 })), { format: v => formatAs(fmts[0], v), title: view.title }));
+    else if (view.chart !== false) {
       const mi = typeof view.chart === 'number' ? view.chart : 0;
       card.append(UI.barChart(list.map(g => ({ label: g.label, value: g.values[mi] || 0 })), { format: v => formatAs(fmts[mi], v), title: view.title }));
     }
-    if (view.showTable !== false) {
+    if (pie || view.showTable !== false) {
       const totals = metrics.map(m => metricValue(t, rows, m));
       card.append(h('div', { class: 'ca-table-wrap', style: { marginTop: '0.75rem' } }, h('table', { class: 'ca-table' },
         h('thead', h('tr', h('th', col.label), metrics.map(m => h('th', { class: 'num' }, m.label || m.op)))),
-        h('tbody', list.map(g => h('tr', h('td', g.label), g.values.map((v, i) => h('td', { class: 'num' }, formatAs(fmts[i], v)))))),
+        h('tbody', list.map((g, gi) => h('tr', h('td', pie && UI.swatch(UI.palette[gi % UI.palette.length]), g.label), g.values.map((v, i) => h('td', { class: 'num' }, formatAs(fmts[i], v)))))),
         h('tfoot', h('tr', h('td', 'Total'), totals.map((v, i) => h('td', { class: 'num' }, metrics[i].op === 'sum' || metrics[i].op === 'count' || !metrics[i].op ? formatAs(fmts[i], v) : '')))))));
     }
     el.append(card);
@@ -2597,7 +2891,9 @@
       return;
     }
     closeQuickMenu();
-    const panel = S.data ? h('div', S.app.views.length > 1 ? { role: 'tabpanel', id: 'ca-panel', 'aria-labelledby': `ca-tab-${S.tab}` } : null, renderCurrentView()) : renderLanding();
+    comboOpen?.();
+    inlineOpen = null;
+    const panel =S.data ? h('div', S.app.views.length > 1 ? { role: 'tabpanel', id: 'ca-panel', 'aria-labelledby': `ca-tab-${S.tab}` } : null, renderCurrentView()) : renderLanding();
     root.replaceChildren(skip, renderHeader(), renderBanners(), S.data ? renderTabs() : '',
       h('main', { class: 'ca-main', id: 'ca-main', tabindex: '-1' }, panel), renderFooter());
     // The tab bar scrolls sideways on narrow screens: keep the selected tab in view.
@@ -2804,6 +3100,8 @@
           if (c.type === 'choice') ok(`${where} options`, Array.isArray(c.options) && c.options.length);
           if (c.type === 'ref') ok(`${where} ref target`, !!app.tables[c.table], c.table);
           if (c.type === 'computed') ok(`${where} fn`, typeof c.fn === 'function');
+          if (c.showIf != null) ok(`${where} showIf is a function (row, api) => boolean`, typeof c.showIf === 'function');
+          if (c.control != null) ok(`${where} control "toggle" is on a choice column`, c.control === 'toggle' && c.type === 'choice', String(c.control));
         }
         ok(`${tk} display column`, typeof td.display === 'function' || !!td.columns[td.display], String(td.display));
       }
@@ -2828,6 +3126,11 @@
           const bad = rows.find(r => { const v = rawValue(tk, r, c.key); return typeof v === 'number' && isNaN(v); });
           ok(`${tk}.${c.key} calculates for the starting rows`, !bad, bad ? `${displayOf(tk, bad) || bad.id}: ${S.lastCalcError || 'invalid number'}` : '');
         }
+        for (const c of Object.values(td.columns)) {
+          if (typeof c.showIf !== 'function') continue;
+          const bad = showIfError(tk, rows, c);
+          ok(`${tk}.${c.key} showIf works for the starting rows`, !bad, bad);
+        }
         const invalid = rows.map(r => [r, validateRow(tk, r)]).find(([, e]) => Object.keys(e).length);
         ok(`${tk} starting rows are valid`, !invalid, invalid ? `${displayOf(tk, invalid[0]) || invalid[0].id}: ${Object.values(invalid[1]).join('; ')}` : '');
       }
@@ -2845,6 +3148,11 @@
             if (c.type === 'ref' && r[c.key] && !d.tables[c.table].some(x => x.id === r[c.key])) bad++;
           }
           ok(`fixture "${fx.name}" migrates cleanly`, !bad, bad ? `${bad} bad values${S.lastCalcError ? ` (${S.lastCalcError})` : ''}` : '');
+          const conds = Object.entries(app.tables).flatMap(([tk, td]) => Object.values(td.columns).filter(c => typeof c.showIf === 'function').map(c => [tk, c]));
+          if (conds.length) {
+            const sbad = conds.map(([tk, c]) => showIfError(tk, d.tables[tk] || [], c)).filter(Boolean);
+            ok(`fixture "${fx.name}": showIf works for every row`, !sbad.length, sbad.join('; '));
+          }
           if (fx.expect) {
             const out = fx.expect(d, makeApi());
             ok(`fixture "${fx.name}" expectations`, out !== false && typeof out !== 'string', typeof out === 'string' ? out : '');
@@ -2873,6 +3181,13 @@
     return { passed: res.length - failed.length, failed: failed.length, results: res };
   }
 
+  // The first row whose showIf fails, as "row: message", or ''.
+  function showIfError(t, rows, col) {
+    for (const r of rows) {
+      try { showIfValue(t, r, col); } catch (e) { return `${t}.${col.key} for ${displayOf(t, r) || r.id}: ${e.message}`; }
+    }
+    return '';
+  }
   // Core helpers, then the table and sheet view options this tool uses ("open", "quickEdit",
   // "hiddenColumns", "picker": false), rendered with the first test's rows.
   function viewFeatureSelfTest(ok) {
@@ -2882,9 +3197,15 @@
     ok('NEXTREF continues from the last reference', !bad, bad ? `${JSON.stringify(bad[0])} gave ${JSON.stringify(nextRef(bad[0], bad[1]))}, expected ${JSON.stringify(bad[2])}` : '');
     const sug = suggestList([' Arup', 'buro happold', 'Arup', '', null, 'arup', 'AECOM ']);
     ok('suggestions are trimmed, distinct and sorted ignoring case', JSON.stringify(sug) === JSON.stringify(['AECOM', 'Arup', 'arup', 'buro happold']), JSON.stringify(sug));
+    const found = suggestMatches(['Electrical', 'Mechanical', 'Public health', 'Structures'], 'CAL').items;
+    const many = suggestMatches(Array.from({ length: 60 }, (_, i) => `Item ${i}`), '');
+    ok('suggestions filter by text anywhere in a value, at most 50 at a time', JSON.stringify(found) === JSON.stringify(['Electrical', 'Mechanical']) && many.items.length === 50 && many.more,
+      `${JSON.stringify(found)}, ${many.items.length} of 60`);
+    const pieLabel = UI.pieChart([{ label: 'A', value: 1 }, { label: 'B', value: 3 }, { label: 'C', value: 0 }]).getAttribute('aria-label') || '';
+    ok('pie chart names every slice with its share', /A 25%/.test(pieLabel) && /B 75%/.test(pieLabel) && !/C /.test(pieLabel), pieLabel);
     const app = S.app;
     const list = app.views.flatMap((v, i) => (v.type === 'dashboard' ? (v.blocks || []).map((b, j) => [b, `${i}.${j}`]) : [[v, String(i)]]));
-    const tables = list.filter(([v]) => v.type === 'table' && (v.open || v.quickEdit || v.hiddenColumns));
+    const tables = list.filter(([v]) => v.type === 'table' && (v.open || v.quickEdit || v.hiddenColumns || v.inlineEdit));
     const sheets = list.filter(([v]) => v.type === 'sheet' && v.picker === false);
     if (!tables.length && !sheets.length) return;
     const fx = (app.fixtures || []).find(f => (f.doc.app?.schemaVersion || app.schemaVersion) >= app.schemaVersion);
@@ -2919,6 +3240,21 @@
             }
             ok(`${name} quick edit of ${k} runs the checks and onSave rules`, !err, err);
           }
+        }
+        for (const k of v.inlineEdit || []) ok(`${name} inline edit of ${k} is a column that can be edited`, INLINE_TYPES.includes(td.columns[k]?.type), td.columns[k]?.type || 'no such column');
+        if (v.inlineEdit && !(S.readOnly || td.readOnly || v.readOnly)) {
+          // Every row on show has a button for each inline-editable column that applies to it.
+          const cols = v.inlineEdit.filter(k => INLINE_TYPES.includes(td.columns[k]?.type) && !(v.quickEdit || []).includes(k) && heads.includes(td.columns[k].label));
+          let want = 0, missing = '';
+          for (const tr of probe.querySelectorAll('tbody tr[data-ca-row]')) {
+            const r = rowById(v.table, tr.dataset.caRow);
+            for (const k of cols) {
+              if (!r || !applies(v.table, r, td.columns[k])) continue;
+              want++;
+              if (!tr.querySelector(`button.ca-inline[data-ca-col="${CSS.escape(k)}"]`) && !missing) missing = `${k} of ${displayOf(v.table, r) || r.id}`;
+            }
+          }
+          ok(`${name} inline edit buttons`, !missing && probe.querySelectorAll('tbody .ca-inline').length === want, missing ? `no button for ${missing}` : `${probe.querySelectorAll('tbody .ca-inline').length} for ${want} cells`);
         }
         if (v.hiddenColumns) {
           const leaked = v.hiddenColumns.filter(k => heads.includes(td.columns[k]?.label) && !(v.columns || []).some(c => c !== k && td.columns[c]?.label === td.columns[k]?.label));
@@ -3697,7 +4033,7 @@
   const TOP_KEYS = ['id', 'name', 'description', 'version', 'schemaVersion', 'locale', 'currency', 'home', 'versionUrl', 'identity',
     'fileName', 'saveInPlace', 'properties', 'settings', 'tables', 'views', 'seed', 'migrations', 'tests'];
   const TABLE_KEYS = ['id', 'label', 'singular', 'description', 'display', 'displayFormula', 'columns', 'checks', 'onSave', 'readOnly'];
-  const COL_COMMON = ['id', 'label', 'type', 'required', 'unique', 'help', 'hidden', 'hideInForm', 'mono', 'default', 'defaultFormula'];
+  const COL_COMMON = ['id', 'label', 'type', 'required', 'unique', 'help', 'hidden', 'hideInForm', 'mono', 'default', 'defaultFormula', 'showIf', 'control'];
   const COL_BY_TYPE = {
     text: ['maxLength', 'suggest', 'suggestFrom'], longtext: [], number: ['min', 'max', 'decimals', 'step'], currency: ['min', 'max', 'currency', 'step'],
     percent: ['min', 'max', 'decimals', 'step'], date: [], boolean: ['checkLabel'], choice: ['options', 'colors'],
@@ -3705,7 +4041,7 @@
   };
   const ALL_COL_KEYS = [...new Set([...COL_COMMON, ...Object.values(COL_BY_TYPE).flat()])];
   const VIEW_KEYS = {
-    table: ['table', 'columns', 'hiddenColumns', 'sort', 'totals', 'filters', 'where', 'add', 'readOnly', 'preset', 'search', 'open', 'quickEdit'],
+    table: ['table', 'columns', 'hiddenColumns', 'sort', 'totals', 'filters', 'where', 'add', 'readOnly', 'preset', 'search', 'open', 'quickEdit', 'inlineEdit'],
     summary: ['table', 'groupBy', 'bucket', 'metrics', 'chart', 'showTable', 'where', 'sortBy'],
     kpi: ['items'], dashboard: ['blocks'], settings: ['fields', 'intro'],
     sheet: ['table', 'fields', 'sort', 'where', 'child', 'picker'],
@@ -3951,6 +4287,15 @@
             if (c.suggest === false) warn(where, '"suggest" is false, so "suggestFrom" is ignored. Remove one of them.');
           }
         }
+        if (c.showIf != null) {
+          if (kind === 'settings') err(where, 'Settings are always shown, so "showIf" only works on table columns.');
+          else if (c.type === 'computed') err(where, 'Calculated columns are never typed in, so "showIf" does not apply to them. Remove it, or use IF in the formula to give a blank.');
+        }
+        if (c.control != null) {
+          if (c.control !== 'toggle') err(where, `"control" can only be "toggle", not "${c.control}". Leave it out for a drop-down.`);
+          else if (c.type !== 'choice') err(where, `"control": "toggle" only works on choice columns, but "${c.id}" is ${c.type}.`);
+          else if (Array.isArray(c.options) && c.options.length > 4) warn(where, `"control": "toggle" suits two to four options, and this column has ${c.options.length}. Leave "control" out to use a drop-down.`);
+        }
         for (const k of ['min', 'max', 'step']) if (c[k] != null && typeof c[k] !== 'number') err(where, `"${k}" must be a number, without quotes.`);
         if (c.decimals != null && !(Number.isInteger(c.decimals) && c.decimals >= 0 && c.decimals <= 10)) err(where, '"decimals" must be a whole number from 0 to 10.');
         if (c.type === 'choice') {
@@ -4080,6 +4425,7 @@
         for (const c of Object.values(td.cols)) {
           if (c.defaultFormula != null) formula(c.defaultFormula, `${where} › column "${c.id}" › defaultFormula`, {}, 'a default formula');
           if (c.colorFormula != null) formula(c.colorFormula, `${where} › column "${c.id}" › colorFormula`, rowSc);
+          if (c.showIf != null && c.type !== 'computed') formula(c.showIf, `${where} › column "${c.id}" › showIf`, rowSc, 'a "showIf" formula, true when the field applies');
         }
         if (t.display != null) {
           if (typeof t.display !== 'string' || !td.cols[t.display]) err(where, typeof t.display === 'string' && /[\s&(+'"]/.test(t.display) ? `"display" names one column. For a formula use "displayFormula": "${t.display}".` : unknownMsg(`display column "${t.display}"`, String(t.display), Object.keys(td.cols)));
@@ -4185,6 +4531,18 @@
               });
               if (v.readOnly === true) warn(where, '"quickEdit" does nothing in a read-only view.');
             }
+            if (v.inlineEdit != null) {
+              if (!Array.isArray(v.inlineEdit)) err(where, '"inlineEdit" is a list of columns whose values can be changed straight from the table, for example ["diversity"].');
+              else if (td) v.inlineEdit.forEach(k => {
+                if (!colOk(k, 'inlineEdit column')) return;
+                const ty = td.cols[k].type;
+                if (ty === 'computed') err(where, `"${k}" is calculated, so it cannot be edited. Remove it from "inlineEdit".`);
+                else if (!INLINE_TYPES.includes(ty)) err(where, `"${k}" is a ${ty} column, which is edited in the form. "inlineEdit" works for ${INLINE_TYPES.join(', ')} columns.`);
+                else if (Array.isArray(v.quickEdit) && v.quickEdit.includes(k)) warn(where, `"${k}" is in both "quickEdit" and "inlineEdit", so it keeps the quick edit menu. Remove it from one of them.`);
+                else if (Array.isArray(v.columns) && !v.columns.includes(k) && !(Array.isArray(v.hiddenColumns) && v.hiddenColumns.includes(k))) warn(where, `"${k}" is in "inlineEdit" but not in "columns", so it cannot be changed from the table. Add it to "columns".`);
+              });
+              if (v.readOnly === true) warn(where, '"inlineEdit" does nothing in a read-only view.');
+            }
             if (v.open != null) {
               const sheets = topViews.filter(x => x.type === 'sheet');
               const target = typeof v.open === 'string' ? sheets.find(x => x.title === v.open) : null;
@@ -4204,7 +4562,8 @@
               else if (info.type !== 'date') err(where, '"bucket" only works when grouping by a date column.');
             }
             metricsOk(v.metrics, false);
-            if (v.chart != null && v.chart !== false && !(Number.isInteger(v.chart) && v.chart >= 0 && v.chart < (Array.isArray(v.metrics) ? v.metrics.length : 1))) err(where, '"chart" is false, or the position of the metric to chart (0 for the first).');
+            if (v.chart != null && v.chart !== false && v.chart !== 'pie' && !(Number.isInteger(v.chart) && v.chart >= 0 && v.chart < (Array.isArray(v.metrics) ? v.metrics.length : 1))) err(where, '"chart" is false, "pie" (a pie chart of the first metric), or the position of the metric to show as bars (0 for the first).');
+            if (v.chart === 'pie' && v.showTable === false) warn(where, 'A pie chart uses the summary table as its legend, so the table is shown even with "showTable": false. Remove "showTable".');
             if (v.sortBy != null && v.sortBy !== 'label') err(where, '"sortBy" can only be "label".');
             break;
           case 'kpi':
@@ -4418,7 +4777,11 @@
     const rowCx = (table, row, extra) => ({ table, row, thisTable: table, thisRow: row, ...extra });
     const fmtOf = t => ({ number: 'number', date: 'date', boolean: 'boolean', text: 'text' }[t]);
     const colOut = (c, tk) => {
-      const { id, formula, defaultFormula, colorFormula, ...out } = c;
+      const { id, formula, defaultFormula, colorFormula, showIf, ...out } = c;
+      if (showIf && tk && c.type !== 'computed') {
+        const sast = fx(showIf, { table: tk, thisTable: tk });
+        out.showIf = row => fxTruthy(fxEval(sast, rowCx(tk, row)));
+      }
       if (c.type === 'computed') {
         const ast = fx(formula, { table: tk, thisTable: tk });
         out.fn = row => fxEval(ast, rowCx(tk, row));
@@ -4912,7 +5275,7 @@
     }
     if (!recs.some(r => r.id === vs.id)) vs.id = recs[0].id;
     const rec = recs.find(r => r.id === vs.id);
-    const fields = (view.fields || Object.keys(td.columns).filter(k => !td.columns[k].hidden)).map(k => td.columns[k]).filter(Boolean);
+    const fields = (view.fields || Object.keys(td.columns).filter(k => !td.columns[k].hidden)).map(k => td.columns[k]).filter(c => c && applies(t, rec, c));
     const ch = view.child, ct = ch && S.app.tables[ch.table];
     let kids = [];
     if (ct) {
@@ -5014,6 +5377,9 @@
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
     });
+    // Inline edits wait for a press to finish before saving (see editInline).
+    document.addEventListener('pointerdown', e => { pointerDown = true; pointerTarget = e.target; }, true);
+    for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, () => { pointerDown = false; }, true);
     document.addEventListener('click', e => {
       document.querySelectorAll('details.ca-menu[open]').forEach(d => { if (!d.contains(e.target) || e.target.closest('.ca-menu-list button')) d.open = false; });
     });
